@@ -116,6 +116,7 @@ Commands:
 | `status` | Whether the managed instance is alive, its port, and current URL. |
 | `goto <url>` | Navigate, then re-inject the keep-alive timer (ANALYSIS §0.4). |
 | `eval <expression>` | `Runtime.evaluate` (returnByValue); prints the JSON value, non-zero exit on exception. |
+| `cdp <Domain.method> [json]` | Raw CDP passthrough — send any supported method with optional JSON params, prints the JSON result. Covers every domain (full table in the `starfish-control` skill). |
 | `text [selector]` | `innerText` of `<body>`, or `textContent` of a selector. |
 | `html [selector]` | `outerHTML` of `<html>`, or of a selector. |
 | `click <selector>` | Click the element's center (box-model coords); re-injects keep-alive if it navigates. |

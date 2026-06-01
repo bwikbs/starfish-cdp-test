@@ -304,6 +304,37 @@ async function cmdEval(args) {
   await finish(browser, 0);
 }
 
+// Raw CDP passthrough: send ANY "Domain.method" with optional JSON params and
+// print the JSON result. Unlocks every domain Starfish implements (Runtime,
+// DOM, Page, Network, CSS, Storage, Input, Emulation, Target, ... — see the
+// skill's domain table). Page/DOM/Network/etc. methods may need their domain
+// `enable`d first; do that with a prior `cdp <Domain>.enable` call.
+async function cmdCdp(args) {
+  const method = args[0];
+  if (!method || !method.includes(".")) {
+    die("usage: cdp <Domain.method> [paramsJson]\n  e.g. cdp Page.navigate '{\"url\":\"https://example.com\"}'", 1);
+  }
+  let params = {};
+  if (args[1] !== undefined) {
+    try {
+      params = JSON.parse(args[1]);
+    } catch (e) {
+      die(`invalid params JSON: ${e.message}`, 1);
+    }
+  }
+  const { browser, client } = await attach();
+  try {
+    const result = await client.send(method, params);
+    console.log(truncate(JSON.stringify(result, null, 2)));
+  } catch (e) {
+    // CDP protocol errors (unknown method, bad params, domain not enabled)
+    // arrive as thrown errors; surface the message and exit non-zero.
+    console.error(`cdp ${method} failed: ${e.message}`);
+    await finish(browser, 1);
+  }
+  await finish(browser, 0);
+}
+
 async function cmdText(args) {
   const selector = args[0];
   const expr = selector
@@ -499,6 +530,7 @@ Perceive (read the live page):
   text [selector]                innerText of body, or textContent of a selector
   html [selector]                outerHTML of <html>, or of a selector
   eval <expression>              Runtime.evaluate (returnByValue); prints JSON value
+  cdp <Domain.method> [json]     raw CDP passthrough; prints JSON result
   screenshot [path]              save PNG (blank pixels on headless)
 
 Act (drive the page):
@@ -512,6 +544,8 @@ Examples:
   node bin/starfish-cdp.mjs start
   node bin/starfish-cdp.mjs goto 'data:text/html,<h1>hi</h1>'
   node bin/starfish-cdp.mjs eval 'document.title'
+  node bin/starfish-cdp.mjs cdp Page.navigate '{"url":"https://example.com"}'
+  node bin/starfish-cdp.mjs cdp DOM.getDocument
   node bin/starfish-cdp.mjs text
   node bin/starfish-cdp.mjs type '#name' Starfish
   node bin/starfish-cdp.mjs click '#go'
@@ -554,6 +588,8 @@ async function main() {
       return cmdGoto(pos);
     case "eval":
       return cmdEval(rest); // keep raw so expression spaces/flags survive
+    case "cdp":
+      return cmdCdp(rest); // raw passthrough: method + optional JSON params
     case "text":
       return cmdText(pos);
     case "html":
