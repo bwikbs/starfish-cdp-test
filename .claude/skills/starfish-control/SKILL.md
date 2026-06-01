@@ -117,6 +117,62 @@ node bin/starfish-cdp.mjs stop                         # ALWAYS stop when done
 Loop: goto/click/type to act, then text/eval/html to perceive and verify the
 effect before the next action.
 
+## Raw `cdp` workflows
+
+Use `cdp <Domain.method> [paramsJson]` for anything the high-level commands
+don't cover. Each line is its own process+connection; WebView state (DOM,
+cookies, storage, navigation) persists between them.
+
+Inspect the DOM tree via the DOM domain instead of `eval`:
+
+```
+node bin/starfish-cdp.mjs cdp DOM.enable
+node bin/starfish-cdp.mjs cdp DOM.getDocument '{"depth":2}'
+node bin/starfish-cdp.mjs cdp DOM.querySelector '{"nodeId":1,"selector":"#go"}'
+node bin/starfish-cdp.mjs cdp DOM.getBoxModel '{"nodeId":<id from querySelector>}'
+```
+
+Cookies + headers (Network / Storage domains):
+
+```
+node bin/starfish-cdp.mjs cdp Network.enable
+node bin/starfish-cdp.mjs cdp Network.setCookie '{"name":"sid","value":"abc","domain":"example.com"}'
+node bin/starfish-cdp.mjs cdp Storage.getCookies
+node bin/starfish-cdp.mjs cdp Network.setExtraHTTPHeaders '{"headers":{"X-Test":"1"}}'
+```
+
+Emulate a viewport / media at runtime (Emulation domain):
+
+```
+node bin/starfish-cdp.mjs cdp Emulation.setDeviceMetricsOverride '{"width":390,"height":844,"deviceScaleFactor":3,"mobile":true}'
+node bin/starfish-cdp.mjs cdp Emulation.setEmulatedMedia '{"media":"print"}'
+node bin/starfish-cdp.mjs eval 'matchMedia("print").matches'   # verify
+node bin/starfish-cdp.mjs cdp Emulation.clearDeviceMetricsOverride
+```
+
+Computed style of a node (CSS domain), end to end:
+
+```
+node bin/starfish-cdp.mjs goto 'data:text/html,<p id=x style="color:red">hi</p>'
+node bin/starfish-cdp.mjs cdp DOM.enable
+node bin/starfish-cdp.mjs cdp CSS.enable
+node bin/starfish-cdp.mjs cdp DOM.getDocument '{"depth":-1}'
+# find the <p> nodeId in the returned tree, then:
+node bin/starfish-cdp.mjs cdp CSS.getComputedStyleForNode '{"nodeId":<id>}'
+```
+
+Page metrics + accessibility tree:
+
+```
+node bin/starfish-cdp.mjs cdp Page.getLayoutMetrics
+node bin/starfish-cdp.mjs cdp Performance.enable
+node bin/starfish-cdp.mjs cdp Performance.getMetrics
+node bin/starfish-cdp.mjs cdp Accessibility.getFullAXTree
+```
+
+Pattern: `cdp <Domain>.enable` once if the method needs it, run the method,
+then perceive/verify with `eval`/`text`. Always `stop` when done.
+
 ## Limitations an agent MUST know
 
 - **Screenshots are BLANK.** The headless build renders transparent pixels — the
