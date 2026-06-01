@@ -24,13 +24,15 @@ API are driven through a raw `CDPSession`. The runner is Node's built-in
 
 - **Node ≥ 18** (developed/verified on Node 24).
 - **A built Starfish headless binary.** The suite targets the `glib_headless`
-  build with CDP enabled:
+  build with CDP enabled. The default path lives in one place —
+  **`starfish.config.json`** at the repo root (`defaultBinary`):
 
-  ```
-  /home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish
+  ```json
+  { "defaultBinary": "/home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish" }
   ```
 
-  Override the path with the `STARFISH_BIN` environment variable:
+  Edit that file to retarget the build for every entry point at once. The
+  `STARFISH_BIN` environment variable still overrides it per-invocation:
 
   ```
   STARFISH_BIN=/abs/path/to/Starfish npm test

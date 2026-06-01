@@ -13,15 +13,30 @@ import { spawn, execFileSync, execSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openSync } from "node:fs";
 import puppeteer from "puppeteer-core";
 
-const DEFAULT_BIN =
-  "/home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish";
+// Single source of truth for the default binary path: starfish.config.json at
+// the repo root. Edit that file to retarget the build; STARFISH_BIN still wins.
+const CONFIG_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "starfish.config.json");
+
+function defaultBin() {
+  try {
+    const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+    if (cfg.defaultBinary) return cfg.defaultBinary;
+    throw new Error("missing 'defaultBinary'");
+  } catch (e) {
+    throw new Error(
+      `Cannot read default binary from ${CONFIG_PATH}: ${e.message}. ` +
+        `Set 'defaultBinary' there or pass STARFISH_BIN.`
+    );
+  }
+}
 
 export function binPath() {
-  return process.env.STARFISH_BIN || DEFAULT_BIN;
+  return process.env.STARFISH_BIN || defaultBin();
 }
 
 // The headless shell exits after onload unless a pending timer keeps it alive
