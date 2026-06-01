@@ -101,6 +101,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **Overlay** | disable, enable, getHighlightObjectForTest, setInspectMode |
 | **Autofill** | disable, enable, setAddresses, trigger (ack-only stub: no autofill engine wired, enable/disable/trigger/setAddresses ack `{}`, no addressFormFilled events emitted) |
 | **FedCm** | clickDialogButton, disable, dismissDialog, enable, openUrl, resetCooldown, selectAccount (stub: no FedCm engine or account-chooser dialog registry — enable/disable/resetCooldown ack `{}`, selectAccount/clickDialogButton/dismissDialog/openUrl error `Dialog not found`, no dialogShown/dialogClosed events) |
+| **DeviceAccess** | cancelPrompt, disable, enable, selectPrompt (stub: no device-chooser engine or prompt registry — enable/disable ack `{}`, selectPrompt/cancelPrompt error `Prompt not found`, no deviceRequestPrompted events) |
 
 > Headless caveats still apply (blank screenshots, single shared WebView, no
 > isolated targets). Some methods are ack/shape-only on the headless build — see
