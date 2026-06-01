@@ -98,6 +98,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **Log** | clear, disable, enable |
 | **Tracing** | end, getCategories, requestMemoryDump, start |
 | **Overlay** | disable, enable, getHighlightObjectForTest, setInspectMode |
+| **Autofill** | disable, enable, setAddresses, trigger (ack-only stub: no autofill engine wired, enable/disable/trigger/setAddresses ack `{}`, no addressFormFilled events emitted) |
 
 > Headless caveats still apply (blank screenshots, single shared WebView, no
 > isolated targets). Some methods are ack/shape-only on the headless build — see
