@@ -79,6 +79,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **Emulation** | clearDeviceMetricsOverride, clearGeolocationOverride, setDeviceMetricsOverride, setEmulatedMedia, setGeolocationOverride, setScriptExecutionDisabled, setUserAgentOverride, setVisibleSize |
 | **DOMStorage** | clear, disable, enable, getDOMStorageItems, removeDOMStorageItem, setDOMStorageItem |
 | **Storage** | clearCookies, clearDataForOrigin, getCookies, getStorageKeyForFrame, setCookies, setStorageBucketTracking, trackCacheStorageForOrigin, trackIndexedDBForOrigin, untrackCacheStorageForOrigin, untrackIndexedDBForOrigin |
+| **CacheStorage** | deleteCache, deleteEntry, requestCacheNames, requestCachedResponse, requestEntries (synthetic stub: reads empty, writes ack, requestCachedResponse errors `cache not found`) |
 | **Target** | activateTarget, attachToTarget, closeTarget, createBrowserContext, createTarget, detachFromTarget, disposeBrowserContext, getBrowserContexts, getTargetInfo, getTargets, setAutoAttach, setDiscoverTargets |
 | **Accessibility** | disable, enable, getFullAXTree, getRootAXNode |
 | **Animation** | disable, enable, getCurrentTime, getPlaybackRate, releaseAnimations, resolveAnimation, seekAnimations, setPaused, setPlaybackRate, setTiming |
