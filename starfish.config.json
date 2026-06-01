@@ -1,3 +1,5 @@
 {
-  "defaultBinary": "/home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish"
+  "defaultBinary": "/home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish",
+  "width": 1280,
+  "height": 720
 }

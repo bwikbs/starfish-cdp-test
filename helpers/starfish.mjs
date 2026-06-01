@@ -39,6 +39,25 @@ export function binPath() {
   return process.env.STARFISH_BIN || defaultBin();
 }
 
+// Viewport size used to initialize Starfish. Read from starfish.config.json
+// (width/height); STARFISH_WIDTH / STARFISH_HEIGHT env vars win. Returns null
+// for a dimension that is unset or non-positive, so the launch falls back to
+// the binary's built-in default.
+export function viewport() {
+  let cfg = {};
+  try {
+    cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    // no config: rely on env / defaults
+  }
+  const pick = (env, key) => {
+    const raw = process.env[env] ?? cfg[key];
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  };
+  return { width: pick("STARFISH_WIDTH", "width"), height: pick("STARFISH_HEIGHT", "height") };
+}
+
 // The headless shell exits after onload unless a pending timer keeps it alive
 // (ANALYSIS §0.4). This snippet must be embedded in EVERY navigated page.
 export const keepAlive = "<script>setInterval(function(){},300)</script>";
@@ -96,11 +115,20 @@ export async function launchStarfish({ port, url } = {}) {
   const logPath = join(logDir, `sf-${port}.log`);
   const out = openSync(logPath, "a");
 
+  // Viewport flags from config (CreateHeadless honors --width/--height; absent
+  // dimensions keep the binary's built-in default — see MiniBrowser.cpp).
+  const { width, height } = viewport();
+  const sizeArgs = [];
+  if (width) sizeArgs.push(`--width=${width}`);
+  if (height) sizeArgs.push(`--height=${height}`);
+
   // setsid gives the child its own session/process-group so we can kill the
   // whole group on teardown without touching the test runner.
+  // URL must be the first binary arg (Shell.cpp loadURL(argv[1])); the size
+  // flags go AFTER it or they would be consumed as the URL.
   const proc = spawn(
     "setsid",
-    ["env", "STARFISH_ENABLE_CDP=1", `STARFISH_CDP_PORT=${port}`, binPath(), startUrl],
+    ["env", "STARFISH_ENABLE_CDP=1", `STARFISH_CDP_PORT=${port}`, binPath(), startUrl, ...sizeArgs],
     {
       detached: true,
       stdio: ["ignore", out, out],
@@ -177,7 +205,13 @@ export async function launchStarfish({ port, url } = {}) {
 
 // Connect a puppeteer-core browser to a running Starfish.
 export async function connect(wsEndpoint) {
-  return puppeteer.connect({ browserWSEndpoint: wsEndpoint });
+  const opts = { browserWSEndpoint: wsEndpoint };
+  // When config sets the viewport, Starfish already launched at that size via
+  // --width/--height. Disable puppeteer's defaultViewport (it would otherwise
+  // override every page to 800x600). Without config, keep puppeteer's default.
+  const { width, height } = viewport();
+  if (width && height) opts.defaultViewport = null;
+  return puppeteer.connect(opts);
 }
 
 // The initial page that Starfish exposes via Target.setAutoAttach.
