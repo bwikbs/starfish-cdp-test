@@ -34,11 +34,13 @@ test("partial domain enables ack without error", async () => {
 });
 
 test("Tracing start/end resolves (ack/shape only)", async () => {
-  // Tracing is acked-empty on headless (no tracingComplete). Assert it does not
-  // throw; do not wait for trace data.
-  await client.send("Tracing.start", {}).catch(() => {});
-  const end = await client.send("Tracing.end", {}).catch((e) => ({ err: e.message }));
-  assert.ok(end !== undefined);
+  // Tracing is acked-empty on headless (no tracingComplete). Assert both calls
+  // resolve to an object (the ack contract); do NOT swallow errors or wait for
+  // trace data. If a future build rejected these, the test would fail loudly.
+  const start = await client.send("Tracing.start", {});
+  assert.equal(typeof start, "object");
+  const end = await client.send("Tracing.end", {});
+  assert.equal(typeof end, "object");
 });
 
 test("unknown DOMAIN returns empty success {}", async () => {
