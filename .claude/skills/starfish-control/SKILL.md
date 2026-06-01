@@ -104,6 +104,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **DeviceAccess** | cancelPrompt, disable, enable, selectPrompt (stub: no device-chooser engine or prompt registry — enable/disable ack `{}`, selectPrompt/cancelPrompt error `Prompt not found`, no deviceRequestPrompted events) |
 | **Cast** | disable, enable, setSinkToUse, startDesktopMirroring, startTabMirroring, stopCasting (stub: DIAL CastServer not CDP-wired — no Cast/presentation sink registry, enable/disable ack `{}`, setSinkToUse/startDesktopMirroring/startTabMirroring/stopCasting error `Sink not found`, no sinksUpdated/issueUpdated events) |
 | **Tethering** | bind, unbind (ack-only stub: no reverse tunnel, bind/unbind ack `{}`, bound port never forwards — no `accepted` event emitted) |
+| **Extensions** | loadUnpacked, uninstall, getStorageItems, setStorageItems, removeStorageItems, clearStorageItems (stub: no extension subsystem — no extension loader, extension-id registry, or chrome.storage backing store, so every method errors `Extensions are not supported`, no events) |
 
 > Headless caveats still apply (blank screenshots, single shared WebView, no
 > isolated targets). Some methods are ack/shape-only on the headless build — see
