@@ -69,6 +69,64 @@ perceive → act → verify → observe → screenshot → multi-tab → teardow
 screenshot to `demo/out/screenshot.png` (gitignored), and exits 0 on success or
 non-zero if the closed-loop verification fails.
 
+## Agent control (skill + CLI entry point)
+
+For driving the browser interactively from an agent (rather than running the
+scripted demo), there's a stateless-per-call CLI: `bin/starfish-cdp.mjs`.
+Starfish and its CDP/page state persist across separate process invocations
+(ANALYSIS §0.3), so each command connects to the already-running Starfish, does
+one action, prints a result, and disconnects (never `close` — that would tear
+Starfish down). A small state file at `~/.starfish-cdp/state.json` records the
+managed instance's port.
+
+Invoke directly or via npm:
+
+```
+node bin/starfish-cdp.mjs <command>
+npm run cdp -- <command>
+```
+
+Commands:
+
+| Command | What it does |
+| --- | --- |
+| `start [--port N] [--url URL]` | Launch + detach Starfish (default port 9222). Refuses to double-launch. |
+| `stop` | Kill the managed instance, port-scoped (never touches another Starfish). Idempotent. |
+| `status` | Whether the managed instance is alive, its port, and current URL. |
+| `goto <url>` | Navigate, then re-inject the keep-alive timer (ANALYSIS §0.4). |
+| `eval <expression>` | `Runtime.evaluate` (returnByValue); prints the JSON value, non-zero exit on exception. |
+| `text [selector]` | `innerText` of `<body>`, or `textContent` of a selector. |
+| `html [selector]` | `outerHTML` of `<html>`, or of a selector. |
+| `click <selector>` | Click the element's center (box-model coords); re-injects keep-alive if it navigates. |
+| `type <selector> <text>` | Focus + insert text; prints the input's value. |
+| `screenshot [path]` | Save a PNG (blank pixels on headless). |
+| `help` | Usage. |
+
+Start → act → verify → stop:
+
+```
+node bin/starfish-cdp.mjs start
+node bin/starfish-cdp.mjs goto 'https://example.com'
+node bin/starfish-cdp.mjs text
+node bin/starfish-cdp.mjs type '#name' Starfish
+node bin/starfish-cdp.mjs click '#go'
+node bin/starfish-cdp.mjs eval 'document.getElementById("result").textContent'
+node bin/starfish-cdp.mjs stop
+```
+
+Perceive with `text` / `eval` / `html` (screenshots render blank on headless).
+Always `stop` when done so no process is left running.
+
+### The `starfish-control` skill
+
+A Claude Code skill that wraps this CLI lives at
+`.claude/skills/starfish-control/SKILL.md`. It's auto-discovered for this
+project. To use it globally, copy or symlink it into `~/.claude/skills/`:
+
+```
+ln -s "$PWD/.claude/skills/starfish-control" ~/.claude/skills/starfish-control
+```
+
 ## Headless limitations (why some things are asserted "shape only")
 
 This is the **headless** build with a mock graphics backend, so the test scope

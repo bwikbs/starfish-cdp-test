@@ -4,12 +4,16 @@
   "description": "CDP test suite and agent-control demo for the Starfish browser engine (headless build).",
   "type": "module",
   "private": true,
+  "bin": {
+    "starfish-cdp": "bin/starfish-cdp.mjs"
+  },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 \"test/*.test.mjs\"",
-    "demo": "node demo/agent-control.mjs"
+    "demo": "node demo/agent-control.mjs",
+    "cdp": "node bin/starfish-cdp.mjs"
   },
   "dependencies": {
     "puppeteer-core": "^23.11.1"
