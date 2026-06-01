@@ -9,9 +9,9 @@
 //   poll GET /json/version until JSON, then connect puppeteer to ws://127.0.0.1:<port>/.
 //   stop: kill the process group + `pkill -x Starfish` safety net.
 
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFileSync, execSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openSync } from "node:fs";
@@ -93,13 +93,38 @@ export async function launchStarfish({ port, url } = {}) {
   );
   proc.unref();
 
+  // `setsid` re-sessions the child, so `proc.pid` is the short-lived setsid
+  // wrapper, NOT the Starfish session leader — `process.kill(-proc.pid)` would
+  // ESRCH (the leak this fixes). We resolve the real Starfish pid by matching
+  // our unique CDP port in /proc/<pid>/environ, then group-kill THAT instead.
+  const findSelf = () => {
+    try {
+      const pids = execSync("pgrep -x Starfish", { encoding: "utf8" }).trim().split("\n");
+      for (const pid of pids) {
+        if (!pid) continue;
+        // The port lives in the env, not argv, so match /proc/<pid>/environ.
+        try {
+          const env = readFileSync(`/proc/${pid}/environ`, "utf8");
+          if (env.includes(`STARFISH_CDP_PORT=${port}\0`)) return Number(pid);
+        } catch {
+          // race: process gone or environ unreadable
+        }
+      }
+    } catch {
+      // none running
+    }
+    return undefined;
+  };
+
   let stopped = false;
   const stop = async () => {
     if (stopped) return;
     stopped = true;
+    const sfPid = findSelf();
     try {
-      // Kill the whole process group (negative pid).
-      if (proc.pid) process.kill(-proc.pid, "SIGKILL");
+      // Kill our Starfish's process group (negative pid). sfPid is the session
+      // leader, so its pgid === sfPid.
+      if (sfPid) process.kill(-sfPid, "SIGKILL");
     } catch {
       // group already gone
     }
@@ -108,6 +133,21 @@ export async function launchStarfish({ port, url } = {}) {
       execFileSync("pkill", ["-x", "Starfish"], { stdio: "ignore" });
     } catch {
       // nothing to kill
+    }
+    // SIGKILL on a multithreaded Starfish takes a few hundred ms to reap.
+    // Block until it's actually gone so the next file / the test runner's
+    // exit never observes a transient orphan.
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        execFileSync("pgrep", ["-x", "Starfish"], { stdio: "ignore" });
+      } catch {
+        return; // pgrep non-zero => no Starfish left
+      }
+      try {
+        execFileSync("pkill", ["-x", "Starfish"], { stdio: "ignore" });
+      } catch {}
+      await sleep(50);
     }
   };
 
