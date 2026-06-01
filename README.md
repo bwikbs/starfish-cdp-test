@@ -28,7 +28,11 @@ API are driven through a raw `CDPSession`. The runner is Node's built-in
   **`starfish.config.json`** at the repo root (`defaultBinary`):
 
   ```json
-  { "defaultBinary": "/home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish" }
+  {
+    "defaultBinary": "/home/bwikbs/workspace/work_lwe/work1/starfish/out/headless/bin/Starfish",
+    "width": 1280,
+    "height": 720
+  }
   ```
 
   Edit that file to retarget the build for every entry point at once. The
@@ -37,6 +41,21 @@ API are driven through a raw `CDPSession`. The runner is Node's built-in
   ```
   STARFISH_BIN=/abs/path/to/Starfish npm test
   ```
+
+### Viewport size (`width` / `height`)
+
+  Optional `width` / `height` in `starfish.config.json` set the viewport
+  Starfish launches with — passed as `--width=/--height=` flags. They also make
+  the harness disable puppeteer's `defaultViewport` (which would otherwise force
+  every page to **800×600**), so `window.innerWidth/innerHeight` and
+  `screen.width/height` match the configured size.
+
+  ```json
+  { "defaultBinary": "...", "width": 1280, "height": 720 }
+  ```
+
+  `STARFISH_WIDTH` / `STARFISH_HEIGHT` env vars override the config per-invocation.
+  Omit both dimensions to keep puppeteer's 800×600 default (prior behavior).
 
 The harness launches one Starfish process per test file on its own port,
 polls `GET /json/version` for readiness, and tears it down via process-group
