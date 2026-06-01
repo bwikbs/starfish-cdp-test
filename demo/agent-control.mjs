@@ -149,8 +149,44 @@ async function main() {
   const h = buf.readUInt32BE(20);
   log(`saved ${w}x${h} PNG to ${shotPath} (NOTE: headless renders blank pixels)`);
 
-  // 9. MULTI-TAB (single shared WebView on headless — lifecycle only)
-  step("9. multi-tab: open a 2nd target, then close it");
+  // 9. RAW CDP WORKFLOW (extra domains the `cdp` passthrough unlocks)
+  // Each call here is the same client.send(...) the `cdp <Domain.method>` CLI
+  // performs — exercising Emulation, Network/Storage, Performance, Accessibility.
+  step("9. raw CDP: Emulation, cookies, metrics, accessibility");
+
+  // Emulation: resize the viewport at runtime and verify innerWidth follows.
+  await client.send("Emulation.setDeviceMetricsOverride", {
+    width: 390, height: 844, deviceScaleFactor: 3, mobile: true,
+  });
+  const vw = await client.send("Runtime.evaluate", {
+    expression: "window.innerWidth", returnByValue: true,
+  });
+  assert.equal(vw.result.value, 390, "Emulation resized the viewport");
+  log(`Emulation.setDeviceMetricsOverride -> innerWidth ${vw.result.value}`);
+  await client.send("Emulation.clearDeviceMetricsOverride");
+
+  // Network + Storage: set a cookie via Network, read it back via Storage.
+  await client.send("Network.setCookie", {
+    name: "sid", value: "demo123", domain: "127.0.0.1",
+  });
+  const cookies = await client.send("Storage.getCookies");
+  const sid = (cookies.cookies || []).find((c) => c.name === "sid");
+  log(`Storage.getCookies -> sid=${sid ? sid.value : "(not found)"}`);
+
+  // Performance: enable + read structured metrics.
+  await client.send("Performance.enable");
+  const perf = await client.send("Performance.getMetrics");
+  const names = (perf.metrics || []).map((m) => m.name);
+  assert.ok(names.length > 0, "Performance.getMetrics returned metrics");
+  log(`Performance.getMetrics -> ${names.length} metrics (${names.slice(0, 4).join(", ")}, ...)`);
+
+  // Accessibility: pull the full AX tree (a11y "perception" channel).
+  await client.send("Accessibility.enable").catch(() => {});
+  const ax = await client.send("Accessibility.getFullAXTree");
+  log(`Accessibility.getFullAXTree -> ${(ax.nodes || []).length} node(s)`);
+
+  // 10. MULTI-TAB (single shared WebView on headless — lifecycle only)
+  step("10. multi-tab: open a 2nd target, then close it");
   const before = (await browser.pages()).length;
   const created = await client.send("Target.createTarget", {
     url: dataUrl("<h1>second context</h1>"),
@@ -167,8 +203,8 @@ async function main() {
   await new Promise((r) => setTimeout(r, 400));
   log(`pages after close: ${(await browser.pages()).length}`);
 
-  // 10. TEARDOWN
-  step("10. teardown");
+  // 11. TEARDOWN
+  step("11. teardown");
   await browser.disconnect().catch(() => {});
   await sf.stop();
   await fx.close();
@@ -176,7 +212,8 @@ async function main() {
 
   console.log(
     "\n[agent] SUCCESS — exercised Page, Runtime, DOM, CSS, Input, Network, " +
-      "Log, Target; closed-loop verification passed."
+      "Log, Emulation, Storage, Performance, Accessibility, Target; " +
+      "closed-loop verification passed."
   );
 }
 

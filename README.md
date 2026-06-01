@@ -86,7 +86,8 @@ npm run demo
 ```
 
 Prints a step-by-step `[agent]` narration (boot → instrument → navigate →
-perceive → act → verify → observe → screenshot → multi-tab → teardown), writes a
+perceive → act → verify → observe → screenshot → raw CDP (Emulation/Storage/
+Performance/Accessibility) → multi-tab → teardown), writes a
 screenshot to `demo/out/screenshot.png` (gitignored), and exits 0 on success or
 non-zero if the closed-loop verification fails.
 
