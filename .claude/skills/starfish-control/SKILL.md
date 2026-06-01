@@ -88,6 +88,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **Performance** | disable, enable, getMetrics, setTimeDomain |
 | **Memory** | forciblyPurgeJavaScriptMemory, getAllTimeSamplingProfile, getBrowserSamplingProfile, getDOMCounters, getDOMCountersForLeakDetection, setPressureNotificationsSuppressed, simulatePressureNotification |
 | **HeapProfiler** | addInspectedHeapObject, collectGarbage, disable, enable, getHeapObjectId, getObjectByHeapObjectId, getSamplingProfile, startSampling, startTrackingHeapObjects, stopSampling, stopTrackingHeapObjects, takeHeapSnapshot (collectGarbage runs the REAL Boehm GC; snapshot/sampling are synthetic: stop/getSamplingProfile return a `(root)` head with empty `samples`, getObjectByHeapObjectId/getHeapObjectId error `Object is not available`) |
+| **WebAuthn** | addCredential, addVirtualAuthenticator, clearCredentials, disable, enable, getCredential, getCredentials, removeCredential, removeVirtualAuthenticator, setAutomaticPresenceSimulation, setUserVerified (REAL in-memory virtual-authenticator registry: add/get/remove/clear genuinely mutate & echo per-authenticator state; unknown id errors `Could not find a Virtual Authenticator matching the ID` / `Could not find a credential matching the ID`. NOT engine-wired — no navigator.credentials/PublicKeyCredential, no credentialAdded/credentialAsserted events) |
 | **Log** | clear, disable, enable |
 | **Tracing** | end, getCategories, requestMemoryDump, start |
 | **Overlay** | disable, enable, getHighlightObjectForTest, setInspectMode |
