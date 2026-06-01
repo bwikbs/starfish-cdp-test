@@ -95,6 +95,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **EventBreakpoints** | disable, removeInstrumentationBreakpoint, setInstrumentationBreakpoint (ack-only stub: no debugger pause wired, set/removeInstrumentationBreakpoint and disable ack `{}`, instrumentation breakpoints never fire — no Debugger.paused) |
 | **Preload** | disable, enable (ack-only stub: no prerender/prefetch pipeline, enable/disable ack `{}`, no ruleSetUpdated/ruleSetRemoved/prerenderStatusUpdated/prefetchStatusUpdated/preloadEnabledStateUpdated events) |
 | **LayerTree** | compositingReasons, disable, enable, loadSnapshot, makeSnapshot, profileSnapshot, releaseSnapshot, replaySnapshot, snapshotCommandLog (stub: no compositor/render-layer tree or layer/snapshot registry — enable/disable/releaseSnapshot ack `{}`, compositingReasons returns empty `compositingReasons`/`compositingReasonIds`, makeSnapshot errors `No layer with given id found`, load/profile/replaySnapshot/snapshotCommandLog error `No snapshot with given id found`, no layerTreeDidChange/layerPainted events) |
+| **Database** | disable, enable, executeSQL, getDatabaseTableNames (stub: deprecated legacy WebSQL — no WebSQL engine/database registry, enable/disable ack `{}`, getDatabaseTableNames/executeSQL error `Database not found`, no addDatabase events) |
 | **Log** | clear, disable, enable |
 | **Tracing** | end, getCategories, requestMemoryDump, start |
 | **Overlay** | disable, enable, getHighlightObjectForTest, setInspectMode |
