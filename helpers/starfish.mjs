@@ -17,6 +17,18 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSync } from "node:fs";
 import puppeteer from "puppeteer-core";
+import { chromium } from "playwright-core";
+
+// Which CDP client the helpers drive: "puppeteer" (default) or "playwright".
+// Selected once per process via the CDP_CLIENT env var so the SAME test files
+// run unchanged under either client (npm run test:puppeteer / test:playwright).
+// Tests obtain a client-agnostic CDP session via newSession(browser, page) and
+// tear down via disconnect(browser); never call puppeteer/playwright-specific
+// methods (page.createCDPSession / browser.disconnect / browser.pages) directly.
+export const CDP_CLIENT = (process.env.CDP_CLIENT || "puppeteer").toLowerCase();
+if (CDP_CLIENT !== "puppeteer" && CDP_CLIENT !== "playwright") {
+  throw new Error(`CDP_CLIENT must be "puppeteer" or "playwright", got "${CDP_CLIENT}"`);
+}
 
 // Single source of truth for the default binary path: starfish.config.json at
 // the repo root. Edit that file to retarget the build; STARFISH_BIN still wins.
@@ -203,8 +215,16 @@ export async function launchStarfish({ port, url } = {}) {
   }
 }
 
-// Connect a puppeteer-core browser to a running Starfish.
+// Connect the selected CDP client to a running Starfish and return its Browser.
+//   puppeteer -> puppeteer.connect({ browserWSEndpoint })
+//   playwright -> chromium.connectOverCDP(wsEndpoint)
+// The two Browser objects are NOT interchangeable; always go through the
+// helpers below (pages / initialPage / newSession / disconnect) rather than
+// calling client-specific methods on the returned object.
 export async function connect(wsEndpoint) {
+  if (CDP_CLIENT === "playwright") {
+    return chromium.connectOverCDP(wsEndpoint);
+  }
   const opts = { browserWSEndpoint: wsEndpoint };
   // When config sets the viewport, Starfish already launched at that size via
   // --width/--height. Disable puppeteer's defaultViewport (it would otherwise
@@ -214,13 +234,48 @@ export async function connect(wsEndpoint) {
   return puppeteer.connect(opts);
 }
 
+// The pages currently exposed by the connected browser (client-agnostic).
+//   puppeteer -> browser.pages()
+//   playwright -> browser.contexts()[0].pages()  (the default CDP context)
+export async function pages(browser) {
+  if (CDP_CLIENT === "playwright") {
+    const ctx = browser.contexts()[0];
+    return ctx ? ctx.pages() : [];
+  }
+  return browser.pages();
+}
+
 // The initial page that Starfish exposes via Target.setAutoAttach.
 export async function initialPage(browser, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const pages = await browser.pages();
-    if (pages.length) return pages[0];
+    const ps = await pages(browser);
+    if (ps.length) return ps[0];
     await sleep(50);
   }
   throw new Error("no initial page appeared");
+}
+
+// Open a raw CDP session bound to `page` (client-agnostic). Returns an object
+// exposing the common CDPSession surface used by the tests: send(method,params)
+// and on(event, handler) -- compatible across both clients.
+//   puppeteer -> page.createCDPSession()
+//   playwright -> page.context().newCDPSession(page)
+export async function newSession(browser, page) {
+  if (CDP_CLIENT === "playwright") {
+    return page.context().newCDPSession(page);
+  }
+  return page.createCDPSession();
+}
+
+// Tear down the connected browser (client-agnostic). This only detaches the
+// client; the Starfish process is killed separately via launchStarfish().stop().
+//   puppeteer -> browser.disconnect()
+//   playwright -> browser.close()  (closes the CDP connection, not the engine)
+export async function disconnect(browser) {
+  if (!browser) return;
+  if (CDP_CLIENT === "playwright") {
+    return browser.close();
+  }
+  return browser.disconnect();
 }

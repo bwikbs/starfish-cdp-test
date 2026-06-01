@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { execFileSync } from "node:child_process";
-import { launchStarfish, connect, initialPage, dataUrl } from "../helpers/starfish.mjs";
+import { launchStarfish, connect, initialPage, dataUrl, newSession, disconnect, pages } from "../helpers/starfish.mjs";
 
 const STATE_DIR = join(homedir(), ".starfish-cdp");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -137,7 +137,7 @@ async function attach() {
   const wsEndpoint = `ws://127.0.0.1:${port}/`;
   const browser = await connect(wsEndpoint);
   const page = await initialPage(browser);
-  const client = await page.createCDPSession();
+  const client = await newSession(browser, page);
   return { browser, page, client, port };
 }
 
@@ -145,7 +145,7 @@ async function attach() {
 // puppeteer keeps sockets open, so we force exit to never hang.
 async function finish(browser, code = 0) {
   try {
-    await browser.disconnect();
+    await disconnect(browser);
   } catch {
     // already gone
   }
@@ -245,10 +245,10 @@ async function cmdStatus() {
   try {
     const browser = await connect(`ws://127.0.0.1:${port}/`);
     const page = await initialPage(browser);
-    const client = await page.createCDPSession();
+    const client = await newSession(browser, page);
     const { frameTree } = await client.send("Page.getFrameTree");
     url = frameTree.frame.url;
-    await browser.disconnect();
+    await disconnect(browser);
   } catch {
     // best-effort url
   }

@@ -11,11 +11,16 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\"",
+    "test": "npm run test:puppeteer && npm run test:playwright",
+    "test:puppeteer": "CDP_CLIENT=puppeteer node --test --test-concurrency=1 \"test/*.test.mjs\"",
+    "test:playwright": "CDP_CLIENT=playwright node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "demo": "node demo/agent-control.mjs",
+    "demo:puppeteer": "CDP_CLIENT=puppeteer node demo/agent-control.mjs",
+    "demo:playwright": "CDP_CLIENT=playwright node demo/agent-control.mjs",
     "cdp": "node bin/starfish-cdp.mjs"
   },
   "dependencies": {
+    "playwright-core": "^1.60.0",
     "puppeteer-core": "^23.11.1"
   }
 }

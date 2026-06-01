@@ -6,7 +6,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { launchStarfish, connect, initialPage, dataUrl } from "../helpers/starfish.mjs";
+import { launchStarfish, connect, initialPage, dataUrl, newSession, disconnect, pages } from "../helpers/starfish.mjs";
 import { startFixtureServer } from "../helpers/fixtureServer.mjs";
 
 const PORT = 9305;
@@ -17,13 +17,13 @@ before(async () => {
   sf = await launchStarfish({ port: PORT, url: dataUrl("<h1>net</h1>") });
   browser = await connect(sf.wsEndpoint);
   page = await initialPage(browser);
-  client = await page.createCDPSession();
+  client = await newSession(browser, page);
   await client.send("Page.enable");
   await client.send("Network.enable");
 });
 
 after(async () => {
-  await browser?.disconnect().catch(() => {});
+  await disconnect(browser).catch(() => {});
   await sf?.stop();
   await fx?.close();
 });

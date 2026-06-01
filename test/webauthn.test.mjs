@@ -14,7 +14,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { launchStarfish, connect, initialPage, dataUrl } from "../helpers/starfish.mjs";
+import { launchStarfish, connect, initialPage, dataUrl, newSession, disconnect, pages } from "../helpers/starfish.mjs";
 
 const PORT = 9315;
 let sf, browser, page, client;
@@ -23,11 +23,11 @@ before(async () => {
   sf = await launchStarfish({ port: PORT, url: dataUrl("<h1>webauthn</h1>") });
   browser = await connect(sf.wsEndpoint);
   page = await initialPage(browser);
-  client = await page.createCDPSession();
+  client = await newSession(browser, page);
 });
 
 after(async () => {
-  await browser?.disconnect().catch(() => {});
+  await disconnect(browser).catch(() => {});
   await sf?.stop();
 });
 

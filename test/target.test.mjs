@@ -1,6 +1,6 @@
 // Target domain — multi-tab. On headless, Target.createTarget WORKS (ANALYSIS
 // §0.0 flip vs the cdp_test crash, re-verified live): a 2nd target spawns,
-// browser.pages() becomes 2, the process stays alive, getTargets shows 2, and
+// pages(browser) becomes 2, the process stays alive, getTargets shows 2, and
 // closeTarget brings it back to 1 with the original session still responsive.
 //
 // NOTE on isolation: the ANALYSIS §0.0 flip table mentions "window.X isolation",
@@ -13,7 +13,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { launchStarfish, connect, initialPage, dataUrl } from "../helpers/starfish.mjs";
+import { launchStarfish, connect, initialPage, dataUrl, newSession, disconnect, pages } from "../helpers/starfish.mjs";
 
 const PORT = 9309;
 let sf, browser, page, client;
@@ -22,11 +22,11 @@ before(async () => {
   sf = await launchStarfish({ port: PORT, url: dataUrl("<h1>tab1</h1>") });
   browser = await connect(sf.wsEndpoint);
   page = await initialPage(browser);
-  client = await page.createCDPSession();
+  client = await newSession(browser, page);
 });
 
 after(async () => {
-  await browser?.disconnect().catch(() => {});
+  await disconnect(browser).catch(() => {});
   await sf?.stop();
 });
 
@@ -37,7 +37,7 @@ test("getTargets lists at least the initial page", async () => {
 });
 
 test("createTarget spawns a 2nd target, process survives, closeTarget restores", async () => {
-  const before = (await browser.pages()).length;
+  const before = (await pages(browser)).length;
 
   let secondTargetId;
   try {
@@ -49,12 +49,12 @@ test("createTarget spawns a 2nd target, process survives, closeTarget restores",
 
     // Wait for the 2nd page to be discovered.
     const deadline = Date.now() + 5000;
-    let pages = await browser.pages();
-    while (pages.length < before + 1 && Date.now() < deadline) {
+    let pgs = await pages(browser);
+    while (pgs.length < before + 1 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 100));
-      pages = await browser.pages();
+      pgs = await pages(browser);
     }
-    assert.equal(pages.length, before + 1, "a second page appeared");
+    assert.equal(pgs.length, before + 1, "a second page appeared");
     assert.equal(sf.proc.killed, false, "process survived createTarget (§0.0 flip)");
 
     const { targetInfos } = await client.send("Target.getTargets");
@@ -69,7 +69,7 @@ test("createTarget spawns a 2nd target, process survives, closeTarget restores",
     }
   }
 
-  const afterPages = await browser.pages();
+  const afterPages = await pages(browser);
   assert.equal(afterPages.length, before, "closeTarget restored the tab count");
 
   // Original session must still be responsive after the multi-tab dance.

@@ -16,7 +16,10 @@ WebView.
 - A built Starfish headless binary. The default path is set in one place —
   `starfish.config.json` (`defaultBinary`) at the project root. Edit it to
   retarget, or override per-invocation with `STARFISH_BIN=/abs/path/to/Starfish`.
-- Node >= 18, `npm install` already run (only `puppeteer-core`).
+- Node >= 18, `npm install` already run (`puppeteer-core` + `playwright-core`,
+  both CDP-only, no bundled browser). The test suite drives **both** clients via
+  the `CDP_CLIENT` env var (`puppeteer` default / `playwright`); the bin CLI and
+  demo honor it too. This control CLI works under either client.
 - Run commands from the project root. Invoke as `node bin/starfish-cdp.mjs <cmd>`
   or `npm run cdp -- <cmd>`.
 

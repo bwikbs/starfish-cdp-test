@@ -15,10 +15,19 @@ It does two things:
    as an autonomous-agent control surface: perceive the DOM, act via Input, then
    verify the effect in a closed loop.
 
-The client is [`puppeteer-core`](https://github.com/puppeteer/puppeteer)
-connected over `ws://127.0.0.1:<port>/`; domains without a high-level puppeteer
-API are driven through a raw `CDPSession`. The runner is Node's built-in
-`node:test` (no Jest/Mocha).
+The suite runs against **both** CDP clients from the *same* test files:
+[`puppeteer-core`](https://github.com/puppeteer/puppeteer) (`puppeteer.connect`)
+and [`playwright-core`](https://playwright.dev) (`chromium.connectOverCDP`),
+each connected over `ws://127.0.0.1:<port>/`. Domains without a high-level
+client API are driven through a raw `CDPSession`. The client is selected per
+process by the **`CDP_CLIENT`** env var (`puppeteer` default, or `playwright`);
+test files never touch client-specific APIs — they go through the helper
+shims `connect` / `initialPage` / `newSession` / `pages` / `disconnect` in
+`helpers/starfish.mjs`. The runner is Node's built-in `node:test` (no Jest/Mocha).
+
+> Playwright's `connectOverCDP` needs `Target.attachToBrowserTarget`, which the
+> Starfish CDP server implements (the page session is then attached through that
+> flat browser session). Both clients exercise the identical 143-test suite.
 
 ## Prerequisites
 
@@ -68,21 +77,28 @@ behind.
 npm install
 ```
 
-(Installs only `puppeteer-core` — no bundled Chromium is downloaded.)
+(Installs `puppeteer-core` and `playwright-core` — neither downloads a bundled
+browser; both are used purely as CDP clients.)
 
 ## Run the tests
 
 ```
-npm test
+npm test                 # both clients: puppeteer then playwright (143 + 143)
+npm run test:puppeteer   # puppeteer only  (CDP_CLIENT=puppeteer)
+npm run test:playwright  # playwright only (CDP_CLIENT=playwright)
 ```
 
-Runs `node --test --test-concurrency=1 "test/*.test.mjs"`. Tests run serially;
-each file launches its own Starfish process.
+`npm test` runs the suite twice — once per client — so every test is asserted
+against both `puppeteer.connect` and `chromium.connectOverCDP`. Each variant is
+`node --test --test-concurrency=1 "test/*.test.mjs"` with `CDP_CLIENT` set. Tests
+run serially; each file launches its own Starfish process. To target a specific
+client ad hoc: `CDP_CLIENT=playwright node --test test/runtime.test.mjs`.
 
 ## Run the demo
 
 ```
-npm run demo
+npm run demo              # default client (puppeteer)
+npm run demo:playwright   # same flow over playwright connectOverCDP
 ```
 
 Prints a step-by-step `[agent]` narration (boot → instrument → navigate →

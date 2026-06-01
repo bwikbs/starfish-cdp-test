@@ -16,6 +16,9 @@ import {
   launchStarfish,
   connect,
   initialPage,
+  newSession,
+  disconnect,
+  pages,
   dataUrl,
 } from "../helpers/starfish.mjs";
 import { startFixtureServer } from "../helpers/fixtureServer.mjs";
@@ -34,7 +37,7 @@ async function main() {
   const sf = await launchStarfish({ port: PORT, url: dataUrl("<h1>booting</h1>") });
   const browser = await connect(sf.wsEndpoint);
   const page = await initialPage(browser);
-  const client = await page.createCDPSession();
+  const client = await newSession(browser, page);
   log(`connected to ${sf.wsEndpoint}`);
   log(`task page: ${fx.url}`);
 
@@ -187,25 +190,25 @@ async function main() {
 
   // 10. MULTI-TAB (single shared WebView on headless — lifecycle only)
   step("10. multi-tab: open a 2nd target, then close it");
-  const before = (await browser.pages()).length;
+  const before = (await pages(browser)).length;
   const created = await client.send("Target.createTarget", {
     url: dataUrl("<h1>second context</h1>"),
   });
-  let pages = await browser.pages();
+  let pgs = await pages(browser);
   const deadline = Date.now() + 4000;
-  while (pages.length < before + 1 && Date.now() < deadline) {
+  while (pgs.length < before + 1 && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 100));
-    pages = await browser.pages();
+    pgs = await pages(browser);
   }
-  log(`pages: ${before} -> ${pages.length} (process alive: ${!sf.proc.killed})`);
+  log(`pages: ${before} -> ${pgs.length} (process alive: ${!sf.proc.killed})`);
   log("note: this engine is a single shared WebView; tabs are not isolated contexts");
   await client.send("Target.closeTarget", { targetId: created.targetId }).catch(() => {});
   await new Promise((r) => setTimeout(r, 400));
-  log(`pages after close: ${(await browser.pages()).length}`);
+  log(`pages after close: ${(await pages(browser)).length}`);
 
   // 11. TEARDOWN
   step("11. teardown");
-  await browser.disconnect().catch(() => {});
+  await disconnect(browser).catch(() => {});
   await sf.stop();
   await fx.close();
   log("clean shutdown, no orphan Starfish");
