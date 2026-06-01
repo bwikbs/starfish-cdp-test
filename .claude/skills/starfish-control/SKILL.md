@@ -82,6 +82,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **CacheStorage** | deleteCache, deleteEntry, requestCacheNames, requestCachedResponse, requestEntries (synthetic stub: reads empty, writes ack, requestCachedResponse errors `cache not found`) |
 | **IndexedDB** | clearObjectStore, deleteDatabase, deleteObjectStoreEntries, disable, enable, getMetadata, requestData, requestDatabase, requestDatabaseNames (synthetic stub: reads empty, writes ack, requestDatabase echoes databaseName with `version:1` and empty objectStores) |
 | **ServiceWorker** | deliverPushMessage, disable, dispatchPeriodicSyncEvent, dispatchSyncEvent, enable, inspectWorker, setForceUpdateOnPageLoad, skipWaiting, startWorker, stopAllWorkers, stopWorker, unregister, updateRegistration (ack-only stub: SW host compiled out, every method acks `{}`, no events emitted) |
+| **BackgroundService** | clearEvents, setRecording, startObserving, stopObserving (ack-only stub: SW host compiled out, every method acks `{}`, no recordingStateChanged/backgroundServiceEventReceived events emitted) |
 | **Target** | activateTarget, attachToTarget, closeTarget, createBrowserContext, createTarget, detachFromTarget, disposeBrowserContext, getBrowserContexts, getTargetInfo, getTargets, setAutoAttach, setDiscoverTargets |
 | **Accessibility** | disable, enable, getFullAXTree, getRootAXNode |
 | **Animation** | disable, enable, getCurrentTime, getPlaybackRate, releaseAnimations, resolveAnimation, seekAnimations, setPaused, setPlaybackRate, setTiming |
