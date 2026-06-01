@@ -20,14 +20,36 @@ import puppeteer from "puppeteer-core";
 import { chromium } from "playwright-core";
 
 // Which CDP client the helpers drive: "puppeteer" (default) or "playwright".
-// Selected once per process via the CDP_CLIENT env var so the SAME test files
-// run unchanged under either client (npm run test:puppeteer / test:playwright).
+// The default comes from the CDP_CLIENT env var (so the SAME test files run
+// unchanged under either client: npm run test:puppeteer / test:playwright), but
+// a host program may override it at runtime with setClient() — the bin CLI uses
+// this to honor a `--client` flag / persisted choice before it connects.
 // Tests obtain a client-agnostic CDP session via newSession(browser, page) and
 // tear down via disconnect(browser); never call puppeteer/playwright-specific
 // methods (page.createCDPSession / browser.disconnect / browser.pages) directly.
-export const CDP_CLIENT = (process.env.CDP_CLIENT || "puppeteer").toLowerCase();
-if (CDP_CLIENT !== "puppeteer" && CDP_CLIENT !== "playwright") {
-  throw new Error(`CDP_CLIENT must be "puppeteer" or "playwright", got "${CDP_CLIENT}"`);
+function validateClient(name) {
+  if (name !== "puppeteer" && name !== "playwright") {
+    throw new Error(`CDP client must be "puppeteer" or "playwright", got "${name}"`);
+  }
+  return name;
+}
+
+// The env-derived default (frozen at load); exported for back-compat.
+export const CDP_CLIENT = validateClient((process.env.CDP_CLIENT || "puppeteer").toLowerCase());
+
+// The active client the shims below dispatch on. Starts at CDP_CLIENT; mutable
+// via setClient() so a host can pick the client after module load.
+let activeClient = CDP_CLIENT;
+
+// Override the active CDP client at runtime (e.g. from a CLI `--client` flag).
+export function setClient(name) {
+  activeClient = validateClient(String(name).toLowerCase());
+  return activeClient;
+}
+
+// The currently active CDP client ("puppeteer" | "playwright").
+export function getClient() {
+  return activeClient;
 }
 
 // Single source of truth for the default binary path: starfish.config.json at
@@ -222,7 +244,7 @@ export async function launchStarfish({ port, url } = {}) {
 // helpers below (pages / initialPage / newSession / disconnect) rather than
 // calling client-specific methods on the returned object.
 export async function connect(wsEndpoint) {
-  if (CDP_CLIENT === "playwright") {
+  if (activeClient === "playwright") {
     return chromium.connectOverCDP(wsEndpoint);
   }
   const opts = { browserWSEndpoint: wsEndpoint };
@@ -238,7 +260,7 @@ export async function connect(wsEndpoint) {
 //   puppeteer -> browser.pages()
 //   playwright -> browser.contexts()[0].pages()  (the default CDP context)
 export async function pages(browser) {
-  if (CDP_CLIENT === "playwright") {
+  if (activeClient === "playwright") {
     const ctx = browser.contexts()[0];
     return ctx ? ctx.pages() : [];
   }
@@ -262,7 +284,7 @@ export async function initialPage(browser, timeoutMs = 5000) {
 //   puppeteer -> page.createCDPSession()
 //   playwright -> page.context().newCDPSession(page)
 export async function newSession(browser, page) {
-  if (CDP_CLIENT === "playwright") {
+  if (activeClient === "playwright") {
     return page.context().newCDPSession(page);
   }
   return page.createCDPSession();
@@ -274,7 +296,7 @@ export async function newSession(browser, page) {
 //   playwright -> browser.close()  (closes the CDP connection, not the engine)
 export async function disconnect(browser) {
   if (!browser) return;
-  if (CDP_CLIENT === "playwright") {
+  if (activeClient === "playwright") {
     return browser.close();
   }
   return browser.disconnect();

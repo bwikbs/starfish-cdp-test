@@ -25,13 +25,29 @@ WebView.
 
 ## Command reference
 
+CDP client selection — drive Starfish through **puppeteer** (default) or
+**playwright**. The choice is independent of what you do; both speak the same
+CDP. Precedence (highest first):
+
+- `--client <puppeteer|playwright>` on any command — wins for that one command.
+  Example: `node bin/starfish-cdp.mjs --client playwright eval '1+1'`
+- `CDP_CLIENT=playwright` env var.
+- the client `start` persisted (so you pick once, the session follows).
+- `puppeteer` default.
+
+- `client [puppeteer|playwright]` — with no arg, print the active/persisted
+  client; with a name, set the persisted default for the running instance.
+  Example: `node bin/starfish-cdp.mjs client playwright`
+
 Lifecycle (state persisted in `~/.starfish-cdp/state.json`):
 
-- `start [--port N] [--url URL]` — launch + detach Starfish (default port 9222).
-  Refuses if one is already running. Example: `node bin/starfish-cdp.mjs start`
+- `start [--port N] [--url URL] [--client X]` — launch + detach Starfish
+  (default port 9222) and persist client `X` (default puppeteer) for later
+  commands. Refuses if one is already running.
+  Example: `node bin/starfish-cdp.mjs start --client playwright`
 - `stop` — kill the managed instance (port-scoped, never touches other Starfish
   processes) and clear state. Idempotent. Example: `node bin/starfish-cdp.mjs stop`
-- `status` — is it alive? prints port + current page URL.
+- `status` — is it alive? prints port + active client + current page URL.
   Example: `node bin/starfish-cdp.mjs status`
 
 Perceive (read the live page — THIS is how you "see"):

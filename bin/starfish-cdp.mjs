@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { execFileSync } from "node:child_process";
-import { launchStarfish, connect, initialPage, dataUrl, newSession, disconnect, pages } from "../helpers/starfish.mjs";
+import { launchStarfish, connect, initialPage, dataUrl, newSession, disconnect, pages, setClient } from "../helpers/starfish.mjs";
 
 const STATE_DIR = join(homedir(), ".starfish-cdp");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -35,6 +35,26 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function die(msg, code = 1) {
   console.error(msg);
   process.exit(code);
+}
+
+// ---- CDP client selection (puppeteer | playwright) -------------------------
+// The CLI drives either client. Precedence (highest first):
+//   1. `--client <name>` flag on this invocation
+//   2. CDP_CLIENT env var
+//   3. the client persisted by `start` in the state file
+//   4. "puppeteer" (default)
+// Each command is its own short-lived connection to the same running Starfish,
+// so the client may even differ per command; `start` persists the choice so the
+// rest of the session defaults to it without repeating the flag.
+let cliClientFlag; // set in main() from the global --client flag (or undefined)
+
+function resolveClient(stateClient) {
+  const name = (cliClientFlag || process.env.CDP_CLIENT || stateClient || "puppeteer").toLowerCase();
+  try {
+    return setClient(name); // validates + makes the helper shims use it
+  } catch (e) {
+    die(e.message, 1);
+  }
 }
 
 // ---- state file -----------------------------------------------------------
@@ -127,6 +147,8 @@ async function attach() {
   if (!state || !state.port) {
     die("no running Starfish; run `start` first", 1);
   }
+  // Pick the CDP client (flag > env > the one `start` persisted > puppeteer).
+  resolveClient(state.client);
   const { port } = state;
   if (!(await isAlive(port))) {
     die(
@@ -189,13 +211,18 @@ async function cmdStart(args) {
     die(`port ${port} already has a live CDP server; refusing to launch`, 1);
   }
 
+  // Resolve + persist the CDP client so later commands default to it (no state
+  // file exists yet, so falls through flag > env > "puppeteer").
+  const client = resolveClient(undefined);
+
   const sf = await launchStarfish({ port, url });
   // launchStarfish already detached the process (setsid + detached + unref).
   // We must NOT call sf.stop() and must let this CLI exit without holding it.
-  writeState({ port, startedAt: new Date().toISOString() });
+  writeState({ port, startedAt: new Date().toISOString(), client });
   console.log(`started Starfish on port ${port}`);
   console.log(`wsEndpoint: ${sf.wsEndpoint}`);
   console.log(`url: ${url}`);
+  console.log(`client: ${client}`);
   console.log("ready");
   process.exit(0);
 }
@@ -234,6 +261,7 @@ async function cmdStatus() {
     console.log("status: no managed instance");
     process.exit(0);
   }
+  const clientName = resolveClient(state.client);
   const { port } = state;
   const alive = await isAlive(port);
   if (!alive) {
@@ -252,7 +280,7 @@ async function cmdStatus() {
   } catch {
     // best-effort url
   }
-  console.log(`status: ALIVE port=${port} startedAt=${state.startedAt} url=${url}`);
+  console.log(`status: ALIVE port=${port} client=${clientName} startedAt=${state.startedAt} url=${url}`);
   process.exit(0);
 }
 
@@ -518,13 +546,43 @@ async function cmdScreenshot(args) {
   await finish(browser, 0);
 }
 
+// Show or set the persisted default CDP client.
+async function cmdClient(args) {
+  const state = readState();
+  const name = args[0];
+  if (!name) {
+    const current = resolveClient(state && state.client);
+    const persisted = state && state.client ? state.client : "(none)";
+    console.log(`client: ${current} (persisted: ${persisted})`);
+    process.exit(0);
+  }
+  let chosen;
+  try {
+    chosen = setClient(String(name).toLowerCase());
+  } catch (e) {
+    die(e.message, 1);
+  }
+  if (state && state.port) {
+    writeState({ ...state, client: chosen });
+    console.log(`default client -> ${chosen} (persisted for the running instance)`);
+  } else {
+    console.log(`default client -> ${chosen} (no managed instance; pass it to \`start\` to persist)`);
+  }
+  process.exit(0);
+}
+
 function usage() {
   console.log(`starfish-cdp — drive a headless Starfish browser over CDP
 
+CDP client (puppeteer | playwright), any command:
+  --client <name>                use this client for THIS command (overrides all)
+  (precedence: --client > CDP_CLIENT env > the client 'start' persisted > puppeteer)
+
 Lifecycle (state in ~/.starfish-cdp/state.json):
-  start [--port N] [--url URL]   launch + detach Starfish (default port ${DEFAULT_PORT})
+  start [--port N] [--url URL] [--client X]  launch + detach Starfish (port ${DEFAULT_PORT}); persists X
   stop                           kill the managed instance (port-scoped), clear state
-  status                         is it alive? port + current url
+  status                         is it alive? port + client + current url
+  client [puppeteer|playwright]  show, or set, the persisted default client
 
 Perceive (read the live page):
   text [selector]                innerText of body, or textContent of a selector
@@ -541,9 +599,10 @@ Act (drive the page):
   help                           this message
 
 Examples:
-  node bin/starfish-cdp.mjs start
+  node bin/starfish-cdp.mjs start --client playwright
+  node bin/starfish-cdp.mjs eval 'document.title'          # uses persisted playwright
+  node bin/starfish-cdp.mjs --client puppeteer eval '1+1'  # override one command
   node bin/starfish-cdp.mjs goto 'data:text/html,<h1>hi</h1>'
-  node bin/starfish-cdp.mjs eval 'document.title'
   node bin/starfish-cdp.mjs cdp Page.navigate '{"url":"https://example.com"}'
   node bin/starfish-cdp.mjs cdp DOM.getDocument
   node bin/starfish-cdp.mjs text
@@ -574,8 +633,21 @@ function positional(args) {
   return out;
 }
 
+// Remove a `--flag value` pair from `args` in place; return the value (or
+// undefined). Used to strip the global --client before per-command parsing so
+// it never leaks into a raw `eval`/`cdp` argument.
+function takeOpt(args, flag) {
+  const i = args.indexOf(flag);
+  if (i === -1) return undefined;
+  const v = args[i + 1];
+  args.splice(i, v !== undefined ? 2 : 1);
+  return v;
+}
+
 async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  cliClientFlag = takeOpt(argv, "--client"); // global; applies to any command
+  const [cmd, ...rest] = argv;
   const pos = positional(rest);
   switch (cmd) {
     case "start":
@@ -584,6 +656,8 @@ async function main() {
       return cmdStop();
     case "status":
       return cmdStatus();
+    case "client":
+      return cmdClient(pos);
     case "goto":
       return cmdGoto(pos);
     case "eval":
