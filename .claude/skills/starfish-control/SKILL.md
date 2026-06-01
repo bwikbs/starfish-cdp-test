@@ -87,6 +87,7 @@ Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 | **Animation** | disable, enable, getCurrentTime, getPlaybackRate, releaseAnimations, resolveAnimation, seekAnimations, setPaused, setPlaybackRate, setTiming |
 | **Performance** | disable, enable, getMetrics, setTimeDomain |
 | **Memory** | forciblyPurgeJavaScriptMemory, getAllTimeSamplingProfile, getBrowserSamplingProfile, getDOMCounters, getDOMCountersForLeakDetection, setPressureNotificationsSuppressed, simulatePressureNotification |
+| **HeapProfiler** | addInspectedHeapObject, collectGarbage, disable, enable, getHeapObjectId, getObjectByHeapObjectId, getSamplingProfile, startSampling, startTrackingHeapObjects, stopSampling, stopTrackingHeapObjects, takeHeapSnapshot (collectGarbage runs the REAL Boehm GC; snapshot/sampling are synthetic: stop/getSamplingProfile return a `(root)` head with empty `samples`, getObjectByHeapObjectId/getHeapObjectId error `Object is not available`) |
 | **Log** | clear, disable, enable |
 | **Tracing** | end, getCategories, requestMemoryDump, start |
 | **Overlay** | disable, enable, getHighlightObjectForTest, setInspectMode |
