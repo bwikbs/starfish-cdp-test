@@ -65,6 +65,8 @@ Raw CDP (any domain Starfish supports — see the full table below):
 Everything Starfish's CDP server implements, callable via `cdp <Domain.method>`.
 (Source of truth: `starfish/src/core/cdp/domains/*Domain.cpp`.)
 
+> The server advertises 49 domains via `Schema.getDomains` (including DOMSnapshot).
+
 | Domain | Methods |
 | --- | --- |
 | **Runtime** | addBinding, callFunctionOn, compileScript, disable, enable, evaluate, getHeapUsage, getProperties, globalLexicalScopeNames, queryObjects, releaseObject, removeBinding, runIfWaitingForDebugger, runScript |
