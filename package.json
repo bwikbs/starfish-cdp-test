@@ -11,12 +11,15 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "npm run test:puppeteer && npm run test:playwright",
+    "test": "npm run test:puppeteer && npm run test:playwright && npm run test:native",
     "test:puppeteer": "CDP_CLIENT=puppeteer node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "test:playwright": "CDP_CLIENT=playwright node --test --test-concurrency=1 \"test/*.test.mjs\"",
+    "test:native": "CDP_CLIENT=native node --test --test-concurrency=1 \"test/*.test.mjs\"",
+    "build:native": "cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/build -j",
     "demo": "node demo/agent-control.mjs",
     "demo:puppeteer": "CDP_CLIENT=puppeteer node demo/agent-control.mjs",
     "demo:playwright": "CDP_CLIENT=playwright node demo/agent-control.mjs",
+    "demo:native": "CDP_CLIENT=native node demo/agent-control.mjs",
     "cdp": "node bin/starfish-cdp.mjs"
   },
   "dependencies": {

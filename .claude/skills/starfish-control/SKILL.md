@@ -25,19 +25,21 @@ WebView.
 
 ## Command reference
 
-CDP client selection — drive Starfish through **puppeteer** (default) or
-**playwright**. The choice is independent of what you do; both speak the same
-CDP. Precedence (highest first):
+CDP client selection — drive Starfish through **puppeteer** (default),
+**playwright**, or the **native** C++ client. The choice is independent of what
+you do; all three speak the same CDP. (`native` requires `npm run build:native`
+first — it's a standalone C++ binary; see `native/README.md`.) Precedence
+(highest first):
 
-- `--client <puppeteer|playwright>` on any command — wins for that one command.
-  Example: `node bin/starfish-cdp.mjs --client playwright eval '1+1'`
-- `CDP_CLIENT=playwright` env var.
+- `--client <puppeteer|playwright|native>` on any command — wins for that one command.
+  Example: `node bin/starfish-cdp.mjs --client native eval '1+1'`
+- `CDP_CLIENT=native` env var.
 - the client `start` persisted (so you pick once, the session follows).
 - `puppeteer` default.
 
-- `client [puppeteer|playwright]` — with no arg, print the active/persisted
+- `client [puppeteer|playwright|native]` — with no arg, print the active/persisted
   client; with a name, set the persisted default for the running instance.
-  Example: `node bin/starfish-cdp.mjs client playwright`
+  Example: `node bin/starfish-cdp.mjs client native`
 
 Lifecycle (state persisted in `~/.starfish-cdp/state.json`):
 

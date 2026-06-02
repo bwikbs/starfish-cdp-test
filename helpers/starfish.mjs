@@ -18,8 +18,14 @@ import { fileURLToPath } from "node:url";
 import { openSync } from "node:fs";
 import puppeteer from "puppeteer-core";
 import { chromium } from "playwright-core";
+import {
+  nativeConnect,
+  nativePages,
+  nativeNewSession,
+  nativeDisconnect,
+} from "../native/index.mjs";
 
-// Which CDP client the helpers drive: "puppeteer" (default) or "playwright".
+// Which CDP client the helpers drive: "puppeteer" (default) | "playwright" | "native".
 // The default comes from the CDP_CLIENT env var (so the SAME test files run
 // unchanged under either client: npm run test:puppeteer / test:playwright), but
 // a host program may override it at runtime with setClient() — the bin CLI uses
@@ -28,8 +34,8 @@ import { chromium } from "playwright-core";
 // tear down via disconnect(browser); never call puppeteer/playwright-specific
 // methods (page.createCDPSession / browser.disconnect / browser.pages) directly.
 function validateClient(name) {
-  if (name !== "puppeteer" && name !== "playwright") {
-    throw new Error(`CDP client must be "puppeteer" or "playwright", got "${name}"`);
+  if (name !== "puppeteer" && name !== "playwright" && name !== "native") {
+    throw new Error(`CDP client must be "puppeteer", "playwright", or "native", got "${name}"`);
   }
   return name;
 }
@@ -47,7 +53,7 @@ export function setClient(name) {
   return activeClient;
 }
 
-// The currently active CDP client ("puppeteer" | "playwright").
+// The currently active CDP client ("puppeteer" | "playwright" | "native").
 export function getClient() {
   return activeClient;
 }
@@ -244,6 +250,9 @@ export async function launchStarfish({ port, url } = {}) {
 // helpers below (pages / initialPage / newSession / disconnect) rather than
 // calling client-specific methods on the returned object.
 export async function connect(wsEndpoint) {
+  if (activeClient === "native") {
+    return nativeConnect(wsEndpoint);
+  }
   if (activeClient === "playwright") {
     return chromium.connectOverCDP(wsEndpoint);
   }
@@ -260,6 +269,9 @@ export async function connect(wsEndpoint) {
 //   puppeteer -> browser.pages()
 //   playwright -> browser.contexts()[0].pages()  (the default CDP context)
 export async function pages(browser) {
+  if (activeClient === "native") {
+    return nativePages(browser);
+  }
   if (activeClient === "playwright") {
     const ctx = browser.contexts()[0];
     return ctx ? ctx.pages() : [];
@@ -284,6 +296,9 @@ export async function initialPage(browser, timeoutMs = 5000) {
 //   puppeteer -> page.createCDPSession()
 //   playwright -> page.context().newCDPSession(page)
 export async function newSession(browser, page) {
+  if (activeClient === "native") {
+    return nativeNewSession(browser, page);
+  }
   if (activeClient === "playwright") {
     return page.context().newCDPSession(page);
   }
@@ -296,6 +311,9 @@ export async function newSession(browser, page) {
 //   playwright -> browser.close()  (closes the CDP connection, not the engine)
 export async function disconnect(browser) {
   if (!browser) return;
+  if (activeClient === "native") {
+    return nativeDisconnect(browser);
+  }
   if (activeClient === "playwright") {
     return browser.close();
   }

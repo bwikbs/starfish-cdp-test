@@ -1,3 +1,7 @@
 node_modules/
 demo/out/
 *.log
+native/build/
+
+# scratch: native tool design notes
+.native_iter/
