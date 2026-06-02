@@ -1,4 +1,4 @@
-# starfish-cdp-test
+# starfish-cdp-skill
 
 A Chrome DevTools Protocol (CDP) test suite and an "agent controls the browser
 via CDP" demo for the [Starfish](../starfish) browser engine's experimental CDP

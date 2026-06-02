@@ -41,7 +41,7 @@ only runtime dep. No transpiler — author tests as ESM `.mjs`.
 ## 2. Project layout
 
 ```
-starfish-cdp-test/
+starfish-cdp-skill/
   PLAN.md                      ← this file
   package.json                 ← type:module, scripts: test / demo, dep puppeteer-core
   README.md                    ← how to run (added later, not by planner)
