@@ -167,6 +167,23 @@ node bin/starfish-cdp.mjs stop
 Perceive with `text` / `eval` / `html` (screenshots render blank on headless).
 Always `stop` when done so no process is left running.
 
+### Node-free: the native C++ CLI
+
+The same command set runs with **no Node** via the native C++ binary — it manages
+the Starfish process and drives CDP directly. Build once, then call it instead of
+`node bin/starfish-cdp.mjs`:
+
+```
+npm run build:native
+B=native/build/starfish-cdp-native
+$B start; $B goto 'data:text/html,<h1>hi</h1>'; $B eval 'document.title'; $B stop
+```
+
+It shares `~/.starfish-cdp/state.json` with the Node CLI and covers the full set
+(start/stop/status + eval/cdp/text/html/goto/click/type/screenshot). See
+**[native/README.md](native/README.md)** for the per-command reference, a
+worked perceive→act→verify example, and raw-`cdp` recipes.
+
 ### The `starfish-control` skill
 
 A Claude Code skill that wraps this CLI lives at

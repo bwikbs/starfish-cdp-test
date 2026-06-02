@@ -42,6 +42,73 @@ or `starfish.config.json`'s `defaultBinary`, with `--width/--height` from config
 `stop` matches the pid by `STARFISH_CDP_PORT` in `/proc/<pid>/environ` and group-kills.
 A convenience npm alias: `npm run cdp:native -- <command>`.
 
+The model is **stateless-per-call**: Starfish keeps running between invocations,
+so each command opens its own CDP connection, does one thing, prints a result,
+and disconnects (it never closes Starfish — only `stop` does). Run from the
+project root (so `./starfish.config.json` resolves). Build once with
+`npm run build:native`; then everything below uses `B=native/build/starfish-cdp-native`.
+
+### Commands
+
+| Command | Args | Does | Prints / exit |
+| ------- | ---- | ---- | ------------- |
+| `start` | `[--port N]` (9222) `[--url URL]` | fork+setsid+execv Starfish (CDP on), poll `/json/version`, write state | `started … / wsEndpoint / url / client: native / ready`; refuses if one is already running |
+| `stop` | — | port-scoped group-kill of the managed Starfish, clear state | `stopped Starfish on port N (pid …)`; idempotent |
+| `status` | — | is the managed instance alive? | `status: ALIVE port=N client=native startedAt=… url=…` (or `no managed instance` / `DEAD`) |
+| `eval` | `<expression>` | `Runtime.evaluate {returnByValue, awaitPromise}` | the JS value (string as-is, else JSON); whole-number floats normalized (`42.0`→`42`); exit 1 on a thrown exception |
+| `cdp` | `<Domain.method> [paramsJSON]` | raw passthrough — any CDP method | the `result` as pretty JSON (2-space); exit 1 on a protocol error |
+| `text` | `[selector]` | `body.innerText`, or `querySelector(sel).textContent` | the text, or `element not found` |
+| `html` | `[selector]` | `documentElement.outerHTML`, or the selector's `outerHTML` | the HTML |
+| `goto` | `<url>` | `Page.navigate` + wait `loadEventFired` + re-inject keep-alive | `navigated to: <url>` |
+| `click` | `<selector>` | box-model-center `Input.dispatchMouseEvent` (press+release); re-injects keep-alive if it navigates | `clicked <sel> at (x,y)` |
+| `type` | `<selector> <text…>` | `DOM.focus` + `Input.insertText` | `typed into <sel>` / `value: <v>` |
+| `screenshot` | `[path]` (`~/.starfish-cdp/screenshot.png`) | `Page.captureScreenshot{png}` → decode → file | `saved WxH PNG to <path>` (blank pixels on headless) |
+| `help` | — | usage | — |
+
+### Worked example — perceive → act → verify (node-free)
+
+A closed loop against a tiny in-page fixture (the live result is read back to
+confirm the action actually changed the DOM):
+
+```sh
+B=native/build/starfish-cdp-native
+URL="data:text/html,<body><input id=name><button id=go>go</button><span id=result></span><script>document.getElementById('go').addEventListener('click',function(){document.getElementById('result').textContent='Hello '+document.getElementById('name').value});setInterval(function(){},300)</script></body>"
+
+$B start                                              # client: native / ready
+$B status                                             # ALIVE port=9222 client=native
+$B goto "$URL"                                         # navigated to: data:…
+$B eval 'document.querySelectorAll("button").length'  # 1
+$B type '#name' Starfish                               # typed into #name / value: Starfish
+$B click '#go'                                         # clicked #go at (363,18)
+$B eval 'document.getElementById("result").textContent'   # Hello Starfish   ← verified
+$B html '#result'                                     # <span id="result">Hello Starfish</span>
+$B screenshot /tmp/shot.png                           # saved 1280x720 PNG to /tmp/shot.png
+$B stop                                               # stopped Starfish on port 9222 (pid …)
+```
+
+### Raw CDP — any domain/method
+
+`cdp` reaches every domain the server implements (full table in the
+`starfish-control` skill). Many read domains need an `enable` first:
+
+```sh
+$B cdp Schema.getDomains                              # → 49 domains
+$B cdp Runtime.evaluate '{"expression":"1+1","returnByValue":true}'
+$B cdp Page.navigate '{"url":"data:text/html,<h1>hi</h1>"}'
+$B cdp DOM.getDocument                                 # pretty-printed node tree
+$B cdp Performance.enable && $B cdp Performance.getMetrics
+$B cdp Network.getAllCookies
+```
+
+### Options & environment
+
+- `--port N` / `--url URL` on `start` (defaults: `9222`, a keep-alive `data:` page).
+- `STARFISH_BIN` overrides the Starfish binary; otherwise `starfish.config.json`
+  `defaultBinary` (+ `width`/`height` → `--width/--height`).
+- State + logs in `$HOME/.starfish-cdp/` (`state.json`, `sf-<port>.log`).
+- Quoting: wrap a `data:` URL or a JS expression in shell quotes; keep JS string
+  literals to single quotes so the whole arg can be double-quoted in the shell.
+
 ```
 Node test / bin CLI / demo
         │  connect / pages / newSession / disconnect   (helpers/starfish.mjs, CDP_CLIENT=native)
