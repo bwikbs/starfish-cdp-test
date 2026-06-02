@@ -137,3 +137,79 @@ bool CdpClient::handshake(std::string& readyLine, std::string& err) {
   readyLine = ready.dump();
   return true;
 }
+
+bool CdpClient::attachInitialPage(std::string& sessionId, std::string& err) {
+  std::string readyLine;
+  if (!handshake(readyLine, err)) return false;
+  // First page from the ordered map (matches handshake's initialPage choice).
+  sessionId = m_pages.begin()->second;
+  return true;
+}
+
+bool CdpClient::sendAndWait(const std::string& method, const json& params,
+                            const std::string& sessionId, int timeoutMs,
+                            json& result, std::string& err) {
+  long id = allocId();
+  json frame = {{"id", id}, {"method", method}, {"params", params}};
+  if (!sessionId.empty()) frame["sessionId"] = sessionId;
+  if (!m_ws.sendText(frame.dump())) {
+    err = "failed to send command";
+    return false;
+  }
+
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  while (std::chrono::steady_clock::now() < deadline) {
+    std::vector<std::string> msgs;
+    if (!m_ws.poll(msgs)) {
+      if (m_ws.closed()) {
+        err = "connection closed while waiting for reply";
+        return false;
+      }
+    }
+    for (const auto& m : msgs) {
+      json msg = json::parse(m, nullptr, /*allow_exceptions=*/false);
+      if (msg.is_discarded()) continue;
+      if (msg.contains("id") && msg["id"].is_number_integer() &&
+          msg["id"].get<long>() == id) {
+        if (msg.contains("error")) {
+          const json& e = msg["error"];
+          std::string m1 = e.value("message", "protocol error");
+          if (e.contains("data") && !e["data"].is_null())
+            m1 += " " + (e["data"].is_string() ? e["data"].get<std::string>()
+                                               : e["data"].dump());
+          err = m1;
+          return false;
+        }
+        result = msg.contains("result") ? msg["result"] : json::object();
+        return true;
+      }
+      // Other events (e.g. Page.loadEventFired) are consumed/ignored here.
+    }
+    if (msgs.empty())
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  err = "timed out waiting for " + method + " reply";
+  return false;
+}
+
+bool CdpClient::waitEvent(const std::string& method, int timeoutMs) {
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  while (std::chrono::steady_clock::now() < deadline) {
+    std::vector<std::string> msgs;
+    if (!m_ws.poll(msgs)) {
+      if (m_ws.closed()) return false;
+    }
+    for (const auto& m : msgs) {
+      json msg = json::parse(m, nullptr, /*allow_exceptions=*/false);
+      if (msg.is_discarded()) continue;
+      if (msg.contains("method") && msg["method"].is_string() &&
+          msg["method"].get<std::string>() == method)
+        return true;
+    }
+    if (msgs.empty())
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return false;
+}

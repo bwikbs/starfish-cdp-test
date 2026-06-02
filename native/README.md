@@ -3,9 +3,44 @@
 A from-scratch, zero-dependency CDP client that **replaces puppeteer/playwright**
 as the driver behind this test suite. Selected with `CDP_CLIENT=native`.
 
-The C++ binary is the actual CDP client (raw-socket WebSocket + CDP JSON-RPC);
-the Node side is a thin bridge so the *same* `helpers/starfish.mjs` shims and the
-*same* 143 tests run unchanged.
+The C++ binary is the actual CDP client (raw-socket WebSocket + CDP JSON-RPC).
+It has **two modes**:
+
+- **CLI mode** (`starfish-cdp-native <command> …`) — a standalone command-line
+  driver, **no Node involved**. Replaces `bin/starfish-cdp.mjs` for the native
+  client: it manages the Starfish process and runs every CDP command directly.
+- **Bridge mode** (`starfish-cdp-native <wsEndpoint>` / `--bridge`) — spawned by
+  the Node helper so the *same* `helpers/starfish.mjs` shims and the *same* 143
+  tests run unchanged under `CDP_CLIENT=native`.
+
+`argv[1]` selects the mode: a `ws://…` endpoint (or `--bridge`) → bridge; anything
+else → CLI.
+
+## CLI mode (node-free)
+
+```
+npm run build:native                                   # build once
+B=native/build/starfish-cdp-native
+
+$B start [--port N] [--url URL]   # launch + detach Starfish, write state, wait ready
+$B status                         # alive? port + client + current url
+$B stop                           # port-scoped kill of the managed Starfish
+
+$B eval '6*7'                     # Runtime.evaluate -> 42
+$B cdp Schema.getDomains          # raw CDP passthrough -> pretty JSON
+$B text [selector]                # innerText / textContent
+$B html [selector]                # outerHTML
+$B goto <url>                     # navigate + re-inject keep-alive
+$B click <selector>               # box-model-center click
+$B type <selector> <text>         # focus + insertText
+$B screenshot [path]              # Page.captureScreenshot -> PNG file
+```
+
+State lives in `$HOME/.starfish-cdp/state.json` (same file the Node CLI uses).
+`start` spawns Starfish via `fork`+`setsid`+`execv` (binary from `STARFISH_BIN`
+or `starfish.config.json`'s `defaultBinary`, with `--width/--height` from config);
+`stop` matches the pid by `STARFISH_CDP_PORT` in `/proc/<pid>/environ` and group-kills.
+A convenience npm alias: `npm run cdp:native -- <command>`.
 
 ```
 Node test / bin CLI / demo

@@ -28,6 +28,22 @@ class CdpClient {
 
   json pagesArray() const;  // [{targetId, sessionId}]
 
+  // ---- synchronous CLI surface ----
+  // Run the auto-attach handshake and return the initial page sessionId (empty
+  // string on failure with `err` set). No IPC lines emitted.
+  bool attachInitialPage(std::string& sessionId, std::string& err);
+
+  // Send `method`/`params` (optionally on `sessionId`) and pump the socket until
+  // that command's reply arrives or `timeoutMs` elapses. On success fills
+  // `result`. On a protocol error or timeout returns false with `err` set.
+  bool sendAndWait(const std::string& method, const json& params,
+                   const std::string& sessionId, int timeoutMs, json& result,
+                   std::string& err);
+
+  // Pump the socket until an event named `method` is seen or `timeoutMs`
+  // elapses. Returns true if the event arrived (others are discarded).
+  bool waitEvent(const std::string& method, int timeoutMs);
+
  private:
   long allocId() { return ++m_lastId; }
   void route(const json& msg, std::vector<std::string>& out);

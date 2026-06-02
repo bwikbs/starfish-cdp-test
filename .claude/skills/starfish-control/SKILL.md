@@ -41,6 +41,12 @@ first — it's a standalone C++ binary; see `native/README.md`.) Precedence
   client; with a name, set the persisted default for the running instance.
   Example: `node bin/starfish-cdp.mjs client native`
 
+> **native, node-free:** the native client is also a standalone C++ binary that
+> runs the *same* command set (start/stop/status + eval/cdp/text/html/goto/click/
+> type/screenshot) with **no Node**: `native/build/starfish-cdp-native <command>`
+> (build once: `npm run build:native`). It shares `~/.starfish-cdp/state.json`
+> with the Node CLI. See `native/README.md`.
+
 Lifecycle (state persisted in `~/.starfish-cdp/state.json`):
 
 - `start [--port N] [--url URL] [--client X]` — launch + detach Starfish

@@ -14,6 +14,7 @@ find_package(Threads REQUIRED)
 
 add_executable(starfish-cdp-native
   src/main.cpp
+  src/cli.cpp
   src/ws_client.cpp
   src/cdp_client.cpp
   src/base64.cpp

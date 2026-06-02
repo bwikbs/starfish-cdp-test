@@ -20,7 +20,8 @@
     "demo:puppeteer": "CDP_CLIENT=puppeteer node demo/agent-control.mjs",
     "demo:playwright": "CDP_CLIENT=playwright node demo/agent-control.mjs",
     "demo:native": "CDP_CLIENT=native node demo/agent-control.mjs",
-    "cdp": "node bin/starfish-cdp.mjs"
+    "cdp": "node bin/starfish-cdp.mjs",
+    "cdp:native": "native/build/starfish-cdp-native"
   },
   "dependencies": {
     "playwright-core": "^1.60.0",

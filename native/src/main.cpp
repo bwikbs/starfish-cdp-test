@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "cdp_client.h"
+#include "cli.h"
 #include "json.hpp"
 #include "ws_client.h"
 
@@ -33,7 +34,22 @@ int main(int argc, char** argv) {
     emit(json({{"type", "fatal"}, {"message", "usage: starfish-cdp-native <wsEndpoint>"}}).dump());
     return 1;
   }
-  std::string wsEndpoint = argv[1];
+
+  // Mode branch: bridge mode when argv[1] is a ws endpoint or "--bridge"
+  // (unchanged behavior, used by the Node helpers); otherwise standalone CLI.
+  std::string arg1 = argv[1];
+  bool bridgeMode = arg1.rfind("ws://", 0) == 0 || arg1 == "--bridge";
+  if (!bridgeMode) {
+    return runCli(argc, argv);
+  }
+  if (arg1 == "--bridge") {
+    if (argc < 3) {
+      emit(json({{"type", "fatal"}, {"message", "usage: starfish-cdp-native --bridge <wsEndpoint>"}}).dump());
+      return 1;
+    }
+    arg1 = argv[2];
+  }
+  std::string wsEndpoint = arg1;
 
   WsClient ws;
   std::string err;
