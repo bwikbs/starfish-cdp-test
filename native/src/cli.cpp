@@ -805,6 +805,859 @@ int cmdScreenshot(const std::vector<std::string>& args) {
   return rc;
 }
 
+// ======================================================================
+//  Extended command surface (mirrors agent-browser's CLI vocabulary,
+//  scoped to what the Starfish CDP server actually implements — see
+//  ANALYSIS.md §3). All of these reuse attach()/the helpers above.
+// ======================================================================
+
+// Evaluate `expr` (returnByValue + awaitPromise) and hand back the JS value.
+// Returns false with `err` set on a protocol failure or a thrown exception.
+bool evalValue(Attached* a, const std::string& expr, json& out,
+               std::string& err) {
+  json result;
+  if (!a->cdp->sendAndWait(
+          "Runtime.evaluate",
+          {{"expression", expr}, {"returnByValue", true}, {"awaitPromise", true}},
+          a->sessionId, 10000, result, err))
+    return false;
+  if (result.contains("exceptionDetails")) {
+    const json& ex = result["exceptionDetails"];
+    if (ex.contains("exception") && ex["exception"].contains("description"))
+      err = ex["exception"]["description"].get<std::string>();
+    else
+      err = ex.value("text", "evaluation threw");
+    return false;
+  }
+  out = result.contains("result") ? result["result"].value("value", json())
+                                  : json();
+  return true;
+}
+
+// Current document URL via Page.getFrameTree (empty on failure).
+std::string currentUrl(Attached* a) {
+  json result;
+  std::string err;
+  if (a->cdp->sendAndWait("Page.getFrameTree", json::object(), a->sessionId,
+                          3000, result, err) &&
+      result.contains("frameTree"))
+    return result["frameTree"]["frame"].value("url", "");
+  return "";
+}
+
+// Resolve a selector to a DOM nodeId (0 = not found).
+int querySelectorNode(Attached* a, const std::string& selector,
+                      std::string& err) {
+  json doc, qs;
+  if (!a->cdp->sendAndWait("DOM.getDocument", json::object(), a->sessionId, 5000,
+                           doc, err))
+    return 0;
+  int rootNodeId = doc["root"].value("nodeId", 0);
+  if (!a->cdp->sendAndWait("DOM.querySelector",
+                           {{"nodeId", rootNodeId}, {"selector", selector}},
+                           a->sessionId, 5000, qs, err))
+    return 0;
+  return qs.value("nodeId", 0);
+}
+
+// ---- get <field> ----
+
+int cmdGet(const std::vector<std::string>& args) {
+  if (args.empty())
+    return die(
+        "usage: get <title|url|value|attr|count|box|styles> [selector] [attr]");
+  std::string field = args[0];
+  std::string selector = args.size() > 1 ? args[1] : "";
+
+  if (field == "title")
+    return evalAndPrint("get title", "", "document.title");
+  if (field == "url")
+    return evalAndPrint("get url", "", "String(location.href)");
+
+  if (field == "value") {
+    if (selector.empty()) return die("usage: get value <selector>");
+    std::string expr = "(function(){var el=document.querySelector(" +
+                       jsStringLiteral(selector) +
+                       ");return el?('value' in el?el.value:null):null;})()";
+    return evalAndPrint("get value", selector, expr);
+  }
+  if (field == "attr") {
+    if (selector.empty() || args.size() < 3)
+      return die("usage: get attr <selector> <attr>");
+    std::string attr = args[2];
+    std::string expr = "(function(){var el=document.querySelector(" +
+                       jsStringLiteral(selector) + ");return el?el.getAttribute(" +
+                       jsStringLiteral(attr) + "):null;})()";
+    return evalAndPrint("get attr", selector, expr);
+  }
+  if (field == "count") {
+    if (selector.empty()) return die("usage: get count <selector>");
+    std::string expr = "document.querySelectorAll(" + jsStringLiteral(selector) +
+                       ").length";
+    return evalAndPrint("get count", selector, expr);
+  }
+  if (field == "box") {
+    if (selector.empty()) return die("usage: get box <selector>");
+    std::string expr =
+        "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+        ");if(!el)return null;var r=el.getBoundingClientRect();return "
+        "{x:r.x,y:r.y,width:r.width,height:r.height,top:r.top,right:r.right,"
+        "bottom:r.bottom,left:r.left};})()";
+    return evalAndPrint("get box", selector, expr);
+  }
+  if (field == "styles") {
+    if (selector.empty()) return die("usage: get styles <selector>");
+    std::string expr =
+        "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+        ");if(!el)return null;var cs=getComputedStyle(el);var o={};for(var "
+        "i=0;i<cs.length;i++){o[cs[i]]=cs.getPropertyValue(cs[i]);}return o;})()";
+    return evalAndPrint("get styles", selector, expr);
+  }
+  return die("unknown get field: " + field +
+             " (title|url|value|attr|count|box|styles)");
+}
+
+// ---- is <state> <selector> ----
+
+int cmdIs(const std::vector<std::string>& args) {
+  if (args.size() < 2)
+    return die("usage: is <visible|enabled|checked> <selector>");
+  std::string state = args[0], selector = args[1];
+  std::string sel = jsStringLiteral(selector);
+  std::string expr;
+  if (state == "visible") {
+    expr =
+        "(function(){var el=document.querySelector(" + sel +
+        ");if(!el)return null;var s=getComputedStyle(el);if(s.display==='none'||"
+        "s.visibility==='hidden'||s.visibility==='collapse'||parseFloat(s."
+        "opacity)===0)return false;return "
+        "!!(el.offsetWidth||el.offsetHeight||el.getClientRects().length);})()";
+  } else if (state == "enabled") {
+    expr = "(function(){var el=document.querySelector(" + sel +
+           ");return el?!el.disabled:null;})()";
+  } else if (state == "checked") {
+    expr = "(function(){var el=document.querySelector(" + sel +
+           ");return el?!!el.checked:null;})()";
+  } else {
+    return die("unknown state: " + state + " (visible|enabled|checked)");
+  }
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "is " << state << " failed: " << err << "\n";
+    rc = 1;
+  } else if (v.is_null()) {
+    std::cerr << "element not found: " << selector << "\n";
+    rc = 1;
+  } else {
+    std::cout << (v.get<bool>() ? "true" : "false") << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- focus / fill / type-family actions ----
+
+// Focus a selector: DOM.focus by nodeId, falling back to el.focus() in JS.
+bool focusSelector(Attached* a, const std::string& selector, std::string& err) {
+  int nodeId = querySelectorNode(a, selector, err);
+  if (!nodeId) return false;
+  json focus;
+  if (a->cdp->sendAndWait("DOM.focus", {{"nodeId", nodeId}}, a->sessionId, 5000,
+                          focus, err))
+    return true;
+  std::string fexpr =
+      "document.querySelector(" + jsStringLiteral(selector) + ").focus()";
+  json r;
+  return a->cdp->sendAndWait("Runtime.evaluate", {{"expression", fexpr}},
+                             a->sessionId, 5000, r, err);
+}
+
+int cmdFocus(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: focus <selector>");
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  a->cdp->sendAndWait("DOM.enable", json::object(), a->sessionId, 5000, result,
+                      err);
+  if (!focusSelector(a, args[0], err)) {
+    std::cerr << "element not found: " << args[0] << "\n";
+    rc = 1;
+  } else {
+    std::cout << "focused " << args[0] << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+int cmdFill(const std::vector<std::string>& args) {
+  std::string selector = args.empty() ? "" : args[0];
+  std::string text;
+  for (size_t i = 1; i < args.size(); i++) {
+    if (i > 1) text += " ";
+    text += args[i];
+  }
+  if (selector.empty()) return die("usage: fill <selector> <text>");
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  do {
+    if (!a->cdp->sendAndWait("DOM.enable", json::object(), a->sessionId, 5000,
+                             result, err)) {
+      std::cerr << "fill failed: " << err << "\n";
+      rc = 1;
+      break;
+    }
+    if (!focusSelector(a, selector, err)) {
+      std::cerr << "element not found: " << selector << "\n";
+      rc = 1;
+      break;
+    }
+    // Clear existing value first (fill = clear + type), then insert text.
+    std::string clearExpr = "(function(){var el=document.querySelector(" +
+                            jsStringLiteral(selector) +
+                            ");if(el&&'value' in el){el.value='';}})()";
+    json cr;
+    a->cdp->sendAndWait("Runtime.evaluate", {{"expression", clearExpr}},
+                        a->sessionId, 5000, cr, err);
+    a->cdp->sendAndWait("Input.insertText", {{"text", text}}, a->sessionId, 5000,
+                        result, err);
+    // Fire input/change so framework listeners see the update.
+    std::string evtExpr =
+        "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+        ");if(el){el.dispatchEvent(new Event('input',{bubbles:true}));el."
+        "dispatchEvent(new Event('change',{bubbles:true}));return ('value' in "
+        "el)?el.value:null;}return null;})()";
+    json valr;
+    a->cdp->sendAndWait("Runtime.evaluate",
+                        {{"expression", evtExpr}, {"returnByValue", true}},
+                        a->sessionId, 5000, valr, err);
+    std::cout << "filled " << selector << "\n";
+    if (valr.contains("result") && valr["result"].contains("value") &&
+        !valr["result"]["value"].is_null())
+      std::cout << "value: " << valueToString(valr["result"]["value"]) << "\n";
+  } while (false);
+  delete a;
+  return rc;
+}
+
+// ---- hover / dblclick (mouse) ----
+
+int cmdHover(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: hover <selector>");
+  std::string selector = args[0];
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  do {
+    if (!a->cdp->sendAndWait("DOM.enable", json::object(), a->sessionId, 5000,
+                             result, err)) {
+      std::cerr << "hover failed: " << err << "\n";
+      rc = 1;
+      break;
+    }
+    double x = 0, y = 0;
+    if (!elementCenter(a->cdp, a->sessionId, selector, x, y)) {
+      std::cerr << "element not found: " << selector << "\n";
+      rc = 1;
+      break;
+    }
+    a->cdp->sendAndWait(
+        "Input.dispatchMouseEvent",
+        {{"type", "mouseMoved"}, {"x", x}, {"y", y}, {"buttons", 0}},
+        a->sessionId, 5000, result, err);
+    std::cout << "hovered " << selector << " at (" << (long)(x + 0.5) << ","
+              << (long)(y + 0.5) << ")\n";
+  } while (false);
+  delete a;
+  return rc;
+}
+
+int cmdDblclick(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: dblclick <selector>");
+  std::string selector = args[0];
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  do {
+    if (!a->cdp->sendAndWait("DOM.enable", json::object(), a->sessionId, 5000,
+                             result, err)) {
+      std::cerr << "dblclick failed: " << err << "\n";
+      rc = 1;
+      break;
+    }
+    double x = 0, y = 0;
+    if (!elementCenter(a->cdp, a->sessionId, selector, x, y)) {
+      std::cerr << "element not found: " << selector << "\n";
+      rc = 1;
+      break;
+    }
+    for (int click = 1; click <= 2; click++) {
+      a->cdp->sendAndWait("Input.dispatchMouseEvent",
+                          {{"type", "mousePressed"},
+                           {"x", x},
+                           {"y", y},
+                           {"button", "left"},
+                           {"clickCount", click},
+                           {"buttons", 1}},
+                          a->sessionId, 5000, result, err);
+      a->cdp->sendAndWait("Input.dispatchMouseEvent",
+                          {{"type", "mouseReleased"},
+                           {"x", x},
+                           {"y", y},
+                           {"button", "left"},
+                           {"clickCount", click},
+                           {"buttons", 0}},
+                          a->sessionId, 5000, result, err);
+    }
+    std::cout << "double-clicked " << selector << " at (" << (long)(x + 0.5)
+              << "," << (long)(y + 0.5) << ")\n";
+  } while (false);
+  delete a;
+  return rc;
+}
+
+// ---- press <key> (keyboard) ----
+
+// Resolve a key name to CDP dispatchKeyEvent fields. Best-effort table for the
+// common named keys; a single printable char becomes its own `text`.
+void keyFields(const std::string& key, std::string& cdpKey, std::string& code,
+               int& vk, std::string& text) {
+  cdpKey = key;
+  code = "";
+  vk = 0;
+  text = "";
+  struct K {
+    const char* name;
+    const char* code;
+    int vk;
+    const char* text;
+  };
+  static const K table[] = {
+      {"Enter", "Enter", 13, "\r"},      {"Tab", "Tab", 9, "\t"},
+      {"Backspace", "Backspace", 8, ""}, {"Delete", "Delete", 46, ""},
+      {"Escape", "Escape", 27, ""},      {"ArrowUp", "ArrowUp", 38, ""},
+      {"ArrowDown", "ArrowDown", 40, ""},{"ArrowLeft", "ArrowLeft", 37, ""},
+      {"ArrowRight", "ArrowRight", 39, ""},
+      {"Home", "Home", 36, ""},          {"End", "End", 35, ""},
+      {"PageUp", "PageUp", 33, ""},      {"PageDown", "PageDown", 34, ""},
+      {"Space", "Space", 32, " "},       {" ", "Space", 32, " "},
+  };
+  for (const auto& k : table) {
+    if (key == k.name) {
+      cdpKey = (key == "Space") ? " " : key;
+      code = k.code;
+      vk = k.vk;
+      text = k.text;
+      return;
+    }
+  }
+  if (key.size() == 1) {  // printable single char
+    text = key;
+    char c = key[0];
+    if (c >= 'a' && c <= 'z') code = std::string("Key") + char(c - 32);
+    else if (c >= 'A' && c <= 'Z') code = std::string("Key") + c;
+    else if (c >= '0' && c <= '9') code = std::string("Digit") + c;
+  }
+}
+
+int cmdPress(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: press <key>   e.g. Enter, Tab, a, Control+a");
+  // Parse modifiers: Alt=1, Ctrl=2, Meta=4, Shift=8 (CDP bitmask).
+  std::string spec = args[0];
+  int modifiers = 0;
+  std::string keyName = spec;
+  size_t pos;
+  while ((pos = keyName.find('+')) != std::string::npos && pos > 0) {
+    std::string mod = keyName.substr(0, pos);
+    std::string rest = keyName.substr(pos + 1);
+    if (rest.empty()) break;  // trailing '+' is itself the key
+    if (mod == "Alt") modifiers |= 1;
+    else if (mod == "Control" || mod == "Ctrl") modifiers |= 2;
+    else if (mod == "Meta" || mod == "Cmd") modifiers |= 4;
+    else if (mod == "Shift") modifiers |= 8;
+    else break;  // not a modifier — treat whole remainder as the key
+    keyName = rest;
+  }
+  std::string cdpKey, code, text;
+  int vk = 0;
+  keyFields(keyName, cdpKey, code, vk, text);
+
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  json down = {{"type", "keyDown"}, {"key", cdpKey}, {"modifiers", modifiers}};
+  if (!code.empty()) down["code"] = code;
+  if (vk) {
+    down["windowsVirtualKeyCode"] = vk;
+    down["nativeVirtualKeyCode"] = vk;
+  }
+  // Only send `text` for an unmodified printable key (Ctrl+a must not insert 'a').
+  if (!text.empty() && (modifiers & ~8) == 0) down["text"] = text;
+  json up = down;
+  up["type"] = "keyUp";
+  up.erase("text");
+  a->cdp->sendAndWait("Input.dispatchKeyEvent", down, a->sessionId, 5000, result,
+                      err);
+  a->cdp->sendAndWait("Input.dispatchKeyEvent", up, a->sessionId, 5000, result,
+                      err);
+  std::cout << "pressed " << spec << "\n";
+  delete a;
+  return 0;
+}
+
+// ---- select / check / uncheck (form controls via JS) ----
+
+int cmdSelect(const std::vector<std::string>& args) {
+  if (args.size() < 2) return die("usage: select <selector> <value>");
+  std::string selector = args[0], value = args[1];
+  std::string expr =
+      "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+      ");if(!el)return null;el.value=" + jsStringLiteral(value) +
+      ";el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new "
+      "Event('change',{bubbles:true}));return el.value;})()";
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "select failed: " << err << "\n";
+    rc = 1;
+  } else if (v.is_null()) {
+    std::cerr << "element not found: " << selector << "\n";
+    rc = 1;
+  } else {
+    std::cout << "selected " << valueToString(v) << " in " << selector << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+int setChecked(const std::vector<std::string>& args, bool checked,
+               const char* label) {
+  if (args.empty()) return die(std::string("usage: ") + label + " <selector>");
+  std::string selector = args[0];
+  std::string expr =
+      "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+      ");if(!el)return null;el.checked=" + (checked ? "true" : "false") +
+      ";el.dispatchEvent(new Event('change',{bubbles:true}));return "
+      "!!el.checked;})()";
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << label << " failed: " << err << "\n";
+    rc = 1;
+  } else if (v.is_null()) {
+    std::cerr << "element not found: " << selector << "\n";
+    rc = 1;
+  } else {
+    std::cout << label << "ed " << selector << " (checked=" << (v.get<bool>() ? "true" : "false")
+              << ")\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- scroll <dir> [px] ----
+
+int cmdScroll(const std::vector<std::string>& args) {
+  std::string dir = args.empty() ? "down" : args[0];
+  int px = 300;
+  std::string selector;
+  for (size_t i = 1; i < args.size(); i++) {
+    if (args[i] == "--selector" && i + 1 < args.size()) {
+      selector = args[++i];
+    } else {
+      int n = atoi(args[i].c_str());
+      if (n > 0) px = n;
+    }
+  }
+  int dx = 0, dy = 0;
+  if (dir == "up") dy = -px;
+  else if (dir == "down") dy = px;
+  else if (dir == "left") dx = -px;
+  else if (dir == "right") dx = px;
+  else return die("scroll direction must be up|down|left|right");
+
+  std::string target = selector.empty()
+                           ? "window"
+                           : "document.querySelector(" +
+                                 jsStringLiteral(selector) + ")";
+  std::string expr = "(function(){var t=" + target +
+                     ";if(!t)return null;t.scrollBy(" + std::to_string(dx) + "," +
+                     std::to_string(dy) + ");return true;})()";
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "scroll failed: " << err << "\n";
+    rc = 1;
+  } else if (v.is_null()) {
+    std::cerr << "scroll target not found: " << selector << "\n";
+    rc = 1;
+  } else {
+    std::cout << "scrolled " << dir << " " << px << "px"
+              << (selector.empty() ? "" : (" in " + selector)) << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- back / forward (Page.getNavigationHistory + navigateToHistoryEntry) ----
+
+int navHistory(int delta, const char* label) {
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  do {
+    a->cdp->sendAndWait("Page.enable", json::object(), a->sessionId, 5000,
+                        result, err);
+    json hist;
+    if (!a->cdp->sendAndWait("Page.getNavigationHistory", json::object(),
+                             a->sessionId, 5000, hist, err)) {
+      std::cerr << label << " failed: " << err << "\n";
+      rc = 1;
+      break;
+    }
+    int cur = hist.value("currentIndex", -1);
+    const json& entries = hist["entries"];
+    int target = cur + delta;
+    if (cur < 0 || !entries.is_array() || target < 0 ||
+        target >= (int)entries.size()) {
+      std::cerr << "cannot go " << label << " (no entry in history)\n";
+      rc = 1;
+      break;
+    }
+    int entryId = entries[target].value("id", 0);
+    if (!a->cdp->sendAndWait("Page.navigateToHistoryEntry", {{"entryId", entryId}},
+                             a->sessionId, 8000, result, err)) {
+      std::cerr << label << " failed: " << err << "\n";
+      rc = 1;
+      break;
+    }
+    a->cdp->waitEvent("Page.loadEventFired", 8000);
+    SLEEP(300);
+    reinjectKeepAlive(a->cdp, a->sessionId);
+    std::cout << label << " to: " << currentUrl(a) << "\n";
+  } while (false);
+  delete a;
+  return rc;
+}
+
+int cmdReload() {
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  std::string url = currentUrl(a);
+  if (url.empty()) {
+    std::cerr << "reload failed: cannot read current url\n";
+    delete a;
+    return 1;
+  }
+  a->cdp->sendAndWait("Page.enable", json::object(), a->sessionId, 5000, result,
+                      err);
+  if (!a->cdp->sendAndWait("Page.navigate", {{"url", url}}, a->sessionId, 8000,
+                           result, err)) {
+    std::cerr << "reload failed: " << err << "\n";
+    rc = 1;
+  } else {
+    a->cdp->waitEvent("Page.loadEventFired", 8000);
+    SLEEP(300);
+    reinjectKeepAlive(a->cdp, a->sessionId);
+    std::cout << "reloaded: " << currentUrl(a) << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- wait <selector|ms> [--text T] [--fn EXPR] [--timeout MS] ----
+
+int cmdWait(const std::vector<std::string>& args) {
+  std::string selector, text, fn;
+  int timeoutMs = 5000;
+  bool sawFlag = false;
+  std::vector<std::string> pos;
+  for (size_t i = 0; i < args.size(); i++) {
+    if (args[i] == "--text" && i + 1 < args.size()) { text = args[++i]; sawFlag = true; }
+    else if (args[i] == "--fn" && i + 1 < args.size()) { fn = args[++i]; sawFlag = true; }
+    else if (args[i] == "--timeout" && i + 1 < args.size()) timeoutMs = atoi(args[++i].c_str());
+    else pos.push_back(args[i]);
+  }
+  // wait <ms>: a bare integer positional and no selector/flag → plain sleep.
+  if (!sawFlag && pos.size() == 1) {
+    bool allDigits = !pos[0].empty();
+    for (char c : pos[0]) if (!isdigit((unsigned char)c)) allDigits = false;
+    if (allDigits) {
+      int ms = atoi(pos[0].c_str());
+      SLEEP(ms);
+      std::cout << "waited " << ms << "ms\n";
+      return 0;
+    }
+  }
+  if (!pos.empty()) selector = pos[0];
+  if (selector.empty() && text.empty() && fn.empty())
+    return die("usage: wait <selector|ms> | --text T | --fn EXPR [--timeout MS]");
+
+  std::string expr;
+  std::string what;
+  if (!fn.empty()) {
+    expr = "(function(){return !!(" + fn + ");})()";
+    what = "condition";
+  } else if (!text.empty()) {
+    expr = "document.body && document.body.innerText.indexOf(" +
+           jsStringLiteral(text) + ")>=0";
+    what = "text " + text;
+  } else {
+    // visible selector
+    expr = "(function(){var el=document.querySelector(" +
+           jsStringLiteral(selector) +
+           ");if(!el)return false;var s=getComputedStyle(el);if(s.display==='none'"
+           "||s.visibility==='hidden')return false;return "
+           "!!(el.offsetWidth||el.offsetHeight||el.getClientRects().length);})()";
+    what = selector;
+  }
+
+  Attached* a = attach();
+  if (!a) return 1;
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  int rc = 1;
+  std::string err;
+  while (std::chrono::steady_clock::now() < deadline) {
+    json v;
+    if (evalValue(a, expr, v, err) && v.is_boolean() && v.get<bool>()) {
+      std::cout << "ready: " << what << "\n";
+      rc = 0;
+      break;
+    }
+    SLEEP(100);
+  }
+  if (rc) std::cerr << "timed out after " << timeoutMs << "ms waiting for " << what << "\n";
+  delete a;
+  return rc;
+}
+
+// ---- snapshot (Accessibility.getFullAXTree → indented role/name tree) ----
+
+void axPrint(const std::map<std::string, json>& byId, const std::string& id,
+             int depth, std::string& out) {
+  auto it = byId.find(id);
+  if (it == byId.end()) return;
+  const json& node = it->second;
+  bool ignored = node.value("ignored", false);
+  std::string role, name;
+  if (node.contains("role")) role = node["role"].value("value", "");
+  if (node.contains("name")) name = node["name"].value("value", "");
+  if (!ignored && !role.empty()) {
+    for (int i = 0; i < depth; i++) out += "  ";
+    out += role;
+    if (!name.empty()) out += " \"" + name + "\"";
+    out += "\n";
+    depth++;
+  }
+  if (node.contains("childIds"))
+    for (const auto& c : node["childIds"])
+      axPrint(byId, c.get<std::string>(), depth, out);
+}
+
+int cmdSnapshot() {
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  a->cdp->sendAndWait("Accessibility.enable", json::object(), a->sessionId, 5000,
+                      result, err);
+  if (!a->cdp->sendAndWait("Accessibility.getFullAXTree", json::object(),
+                           a->sessionId, 10000, result, err) ||
+      !result.contains("nodes")) {
+    std::cerr << "snapshot failed: " << err << "\n";
+    rc = 1;
+  } else {
+    std::map<std::string, json> byId;
+    std::string rootId;
+    for (const auto& n : result["nodes"]) {
+      std::string id = n.value("nodeId", "");
+      if (id.empty()) continue;
+      byId[id] = n;
+      if (rootId.empty()) rootId = id;  // first node is the root web area
+    }
+    std::string out;
+    axPrint(byId, rootId, 0, out);
+    if (out.empty()) out = "(empty accessibility tree)\n";
+    std::cout << out;
+  }
+  delete a;
+  return rc;
+}
+
+// ---- cookies (Network + Storage) ----
+
+int cmdCookies(const std::vector<std::string>& args) {
+  std::string sub = args.empty() ? "list" : args[0];
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  a->cdp->sendAndWait("Network.enable", json::object(), a->sessionId, 5000,
+                      result, err);
+  if (sub == "list" || sub == "get") {
+    if (!a->cdp->sendAndWait("Network.getAllCookies", json::object(),
+                             a->sessionId, 5000, result, err)) {
+      std::cerr << "cookies failed: " << err << "\n";
+      rc = 1;
+    } else {
+      std::cout << result.value("cookies", json::array()).dump(2) << "\n";
+    }
+  } else if (sub == "set") {
+    if (args.size() < 3) {
+      std::cerr << "usage: cookies set <name> <value>\n";
+      rc = 1;
+    } else {
+      std::string url = currentUrl(a);
+      json params = {{"name", args[1]}, {"value", args[2]}, {"url", url}};
+      if (!a->cdp->sendAndWait("Network.setCookie", params, a->sessionId, 5000,
+                               result, err)) {
+        std::cerr << "cookies set failed: " << err << "\n";
+        rc = 1;
+      } else {
+        std::cout << "set cookie " << args[1] << "=" << args[2] << "\n";
+      }
+    }
+  } else if (sub == "clear") {
+    std::string url = currentUrl(a);
+    // Derive origin from the current url for Storage.clearDataForOrigin.
+    std::string origin = url;
+    size_t scheme = url.find("://");
+    if (scheme != std::string::npos) {
+      size_t slash = url.find('/', scheme + 3);
+      origin = slash == std::string::npos ? url : url.substr(0, slash);
+    }
+    if (!a->cdp->sendAndWait(
+            "Storage.clearDataForOrigin",
+            {{"origin", origin}, {"storageTypes", "cookies"}}, a->sessionId,
+            5000, result, err)) {
+      std::cerr << "cookies clear failed: " << err << "\n";
+      rc = 1;
+    } else {
+      std::cout << "cleared cookies for " << origin << "\n";
+    }
+  } else {
+    std::cerr << "usage: cookies [list|set <name> <value>|clear]\n";
+    rc = 1;
+  }
+  delete a;
+  return rc;
+}
+
+// ---- storage local|session [key|set k v|clear] (via localStorage JS) ----
+
+int cmdStorage(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: storage <local|session> [key|set k v|clear]");
+  std::string area = args[0];
+  if (area != "local" && area != "session")
+    return die("storage area must be 'local' or 'session'");
+  std::string obj = area == "local" ? "localStorage" : "sessionStorage";
+  std::string op = args.size() > 1 ? args[1] : "";
+
+  std::string expr;
+  std::string note;
+  if (op.empty()) {
+    expr = "(function(){var o={};for(var i=0;i<" + obj + ".length;i++){var k=" +
+           obj + ".key(i);o[k]=" + obj + ".getItem(k);}return o;})()";
+    note = "storage";
+  } else if (op == "set") {
+    if (args.size() < 4) return die("usage: storage " + area + " set <key> <value>");
+    expr = "(function(){" + obj + ".setItem(" + jsStringLiteral(args[2]) + "," +
+           jsStringLiteral(args[3]) + ");return " + obj + ".getItem(" +
+           jsStringLiteral(args[2]) + ");})()";
+    note = "set";
+  } else if (op == "clear") {
+    expr = "(function(){" + obj + ".clear();return true;})()";
+    note = "clear";
+  } else {
+    // treat op as a key lookup
+    expr = obj + ".getItem(" + jsStringLiteral(op) + ")";
+    note = "get";
+  }
+
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "storage failed: " << err << "\n";
+    rc = 1;
+  } else if (note == "clear") {
+    std::cout << "cleared " << obj << "\n";
+  } else if (note == "set") {
+    std::cout << "set " << args[2] << "=" << valueToString(v) << "\n";
+  } else if (note == "storage") {
+    std::cout << jsonStringify(v) << "\n";
+  } else {
+    std::cout << valueToString(v) << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- pdf <path> (Page.printToPDF) ----
+
+int cmdPdf(const std::vector<std::string>& args) {
+  std::string path = args.empty() ? (stateDir() + "/page.pdf") : args[0];
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  if (!a->cdp->sendAndWait("Page.printToPDF", json::object(), a->sessionId, 30000,
+                           result, err)) {
+    std::cerr << "pdf failed: " << err << "\n";
+    rc = 1;
+  } else {
+    std::string b64 = result.value("data", "");
+    std::string bytes;
+    if (!base64Decode(b64, bytes)) {
+      std::cerr << "pdf failed: invalid base64 data\n";
+      rc = 1;
+    } else {
+      size_t slash = path.find_last_of('/');
+      if (slash != std::string::npos)
+        ::mkdir(path.substr(0, slash).c_str(), 0755);
+      std::ofstream f(path, std::ios::binary);
+      f.write(bytes.data(), (std::streamsize)bytes.size());
+      f.close();
+      std::cout << "saved " << bytes.size() << "-byte PDF to " << path << "\n";
+    }
+  }
+  delete a;
+  return rc;
+}
+
 void usage() {
   std::cout
       << "starfish-cdp-native — drive a headless Starfish browser over CDP\n\n"
@@ -817,11 +1670,34 @@ void usage() {
          "  html [selector]                outerHTML\n"
          "  eval <expression>              Runtime.evaluate; prints JSON value\n"
          "  cdp <Domain.method> [json]     raw CDP passthrough\n"
-         "  screenshot [path]              save PNG\n\n"
+         "  screenshot [path]              save PNG\n"
+         "  pdf [path]                     save PDF (Page.printToPDF)\n"
+         "  snapshot                       accessibility tree (role/name, AI-friendly)\n"
+         "  get <field> [sel] [attr]       title|url|value|attr|count|box|styles\n"
+         "  is <state> <selector>          visible|enabled|checked -> true/false\n\n"
          "Act:\n"
          "  goto <url>                     navigate + re-inject keep-alive\n"
          "  click <selector>               click element center\n"
-         "  type <selector> <text>         focus + insert text\n";
+         "  dblclick <selector>            double-click element center\n"
+         "  hover <selector>               move mouse to element center\n"
+         "  type <selector> <text>         focus + insert text\n"
+         "  fill <selector> <text>         clear + type + fire input/change\n"
+         "  focus <selector>               focus element\n"
+         "  press <key>                    key event (Enter, Tab, a, Control+a)\n"
+         "  select <selector> <value>      set <select> value + change event\n"
+         "  check <selector>               tick a checkbox/radio\n"
+         "  uncheck <selector>             untick a checkbox/radio\n"
+         "  scroll <dir> [px] [--selector S]   up|down|left|right (default 300px)\n\n"
+         "Navigate:\n"
+         "  back                           history back\n"
+         "  forward                        history forward\n"
+         "  reload                         re-navigate current url\n"
+         "  wait <sel|ms>                  wait for element/time\n"
+         "  wait --text T | --fn EXPR      wait for text / JS condition\n"
+         "                                 (all wait forms take --timeout MS)\n\n"
+         "State:\n"
+         "  cookies [list|set n v|clear]   Network/Storage cookies\n"
+         "  storage <local|session> [key|set k v|clear]   web storage\n";
 }
 
 }  // namespace
@@ -855,6 +1731,25 @@ int runCli(int argc, char** argv) {
   if (cmd == "click") return cmdClick(positional());
   if (cmd == "type") return cmdType(positional());
   if (cmd == "screenshot") return cmdScreenshot(positional());
+  if (cmd == "pdf") return cmdPdf(positional());
+  if (cmd == "snapshot") return cmdSnapshot();
+  if (cmd == "get") return cmdGet(positional());
+  if (cmd == "is") return cmdIs(positional());
+  if (cmd == "dblclick") return cmdDblclick(positional());
+  if (cmd == "hover") return cmdHover(positional());
+  if (cmd == "fill") return cmdFill(positional());
+  if (cmd == "focus") return cmdFocus(positional());
+  if (cmd == "press") return cmdPress(positional());
+  if (cmd == "select") return cmdSelect(positional());
+  if (cmd == "check") return setChecked(positional(), true, "check");
+  if (cmd == "uncheck") return setChecked(positional(), false, "uncheck");
+  if (cmd == "scroll") return cmdScroll(args);   // own --selector parsing
+  if (cmd == "back") return navHistory(-1, "back");
+  if (cmd == "forward") return navHistory(1, "forward");
+  if (cmd == "reload") return cmdReload();
+  if (cmd == "wait") return cmdWait(args);        // own flag parsing
+  if (cmd == "cookies") return cmdCookies(positional());
+  if (cmd == "storage") return cmdStorage(positional());
   if (cmd == "help" || cmd == "-h" || cmd == "--help") {
     usage();
     return 0;

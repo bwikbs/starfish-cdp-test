@@ -33,8 +33,20 @@ $B html [selector]                # outerHTML
 $B goto <url>                     # navigate + re-inject keep-alive
 $B click <selector>               # box-model-center click
 $B type <selector> <text>         # focus + insertText
+$B fill <selector> <text>         # clear + type + fire input/change
+$B press <key>                    # Enter / Tab / a / Control+a
+$B snapshot                       # accessibility role/name tree (AI-friendly)
+$B get <field> [sel] [attr]       # title|url|value|attr|count|box|styles
+$B is <state> <selector>          # visible|enabled|checked -> true/false
+$B back | forward | reload        # history navigation
+$B wait <sel|ms> | --text | --fn  # wait for element/time/text/condition
+$B cookies | storage <area> …     # cookies + local/sessionStorage
 $B screenshot [path]              # Page.captureScreenshot -> PNG file
 ```
+
+The full surface (perceive / act / navigate / state groups, options, and the
+agent-browser commands deliberately **not** ported) lives in
+**[COMMANDS.md](COMMANDS.md)**.
 
 State lives in `$HOME/.starfish-cdp/state.json` (same file the Node CLI uses).
 `start` spawns Starfish via `fork`+`setsid`+`execv` (binary from `STARFISH_BIN`
@@ -62,7 +74,24 @@ project root (so `./starfish.config.json` resolves). Build once with
 | `goto` | `<url>` | `Page.navigate` + wait `loadEventFired` + re-inject keep-alive | `navigated to: <url>` |
 | `click` | `<selector>` | box-model-center `Input.dispatchMouseEvent` (press+release); re-injects keep-alive if it navigates | `clicked <sel> at (x,y)` |
 | `type` | `<selector> <text…>` | `DOM.focus` + `Input.insertText` | `typed into <sel>` / `value: <v>` |
-| `screenshot` | `[path]` (`~/.starfish-cdp/screenshot.png`) | `Page.captureScreenshot{png}` → decode → file | `saved WxH PNG to <path>` (blank pixels on headless) |
+| `fill` | `<selector> <text…>` | clear value + `Input.insertText` + fire `input`/`change` | `filled <sel>` / `value: <v>` |
+| `focus` | `<selector>` | `DOM.focus` (JS fallback) | `focused <sel>` |
+| `press` | `<key>` | `Input.dispatchKeyEvent` (named keys / single char / modifier chords) | `pressed <key>` |
+| `hover` | `<selector>` | `Input.dispatchMouseEvent {mouseMoved}` to center | `hovered <sel> at (x,y)` |
+| `dblclick` | `<selector>` | two press+release at the center | `double-clicked <sel> at (x,y)` |
+| `select` | `<selector> <value>` | set `<select>.value` + `change` (via JS) | `selected <v> in <sel>` |
+| `check` / `uncheck` | `<selector>` | set `.checked` + `change` (via JS) | `checked/unchecked <sel>` |
+| `scroll` | `<dir> [px] [--selector S]` | `scrollBy` on window or an element | `scrolled <dir> <px>px` |
+| `get` | `<field> [sel] [attr]` | `title`/`url`/`value`/`attr`/`count`/`box`/`styles` (via JS) | the value, or `element not found` |
+| `is` | `<state> <selector>` | `visible`/`enabled`/`checked` (via JS) | `true`/`false`, or `element not found` |
+| `snapshot` | — | `Accessibility.getFullAXTree` → indented role/name tree | the outline (best agent perception surface) |
+| `back` / `forward` | — | `Page.getNavigationHistory` + `navigateToHistoryEntry` (±1) | `back/forward to: <url>` |
+| `reload` | — | re-navigate the current url + re-inject keep-alive | `reloaded: <url>` |
+| `wait` | `<sel\|ms>` / `--text T` / `--fn EXPR` / `--timeout MS` | poll until visible / elapsed / text present / truthy (default 5000ms) | `ready: <what>` or `timed out` (exit 1) |
+| `cookies` | `[list\|set n v\|clear]` | `Network.getAllCookies`/`setCookie`; `Storage.clearDataForOrigin` | JSON list / confirmation |
+| `storage` | `<local\|session> [key\|set k v\|clear]` | read/write `localStorage`/`sessionStorage` (via JS) | value / object / confirmation |
+| `pdf` | `[path]` (`~/.starfish-cdp/page.pdf`) | `Page.printToPDF` → decode → file | `saved N-byte PDF to <path>` |
+| `screenshot` | `[path]` (`~/.starfish-cdp/screenshot.png`) | `Page.captureScreenshot{png}` → decode → file | `saved WxH PNG to <path>` |
 | `help` | — | usage | — |
 
 ### Worked example — perceive → act → verify (node-free)

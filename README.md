@@ -179,10 +179,15 @@ B=native/build/starfish-cdp-native
 $B start; $B goto 'data:text/html,<h1>hi</h1>'; $B eval 'document.title'; $B stop
 ```
 
-It shares `~/.starfish-cdp/state.json` with the Node CLI and covers the full set
-(start/stop/status + eval/cdp/text/html/goto/click/type/screenshot). See
-**[native/README.md](native/README.md)** for the per-command reference, a
-worked perceive→act→verify example, and raw-`cdp` recipes.
+It shares `~/.starfish-cdp/state.json` with the Node CLI and covers a broad
+`agent-browser`-style command surface: lifecycle (`start`/`stop`/`status`),
+perceive (`text`/`html`/`eval`/`cdp`/`screenshot`/`pdf`/`snapshot`/`get`/`is`),
+act (`click`/`dblclick`/`hover`/`type`/`fill`/`focus`/`press`/`select`/`check`/
+`uncheck`/`scroll`), navigate (`goto`/`back`/`forward`/`reload`/`wait`), and
+state (`cookies`/`storage`). See **[native/COMMANDS.md](native/COMMANDS.md)** for
+the full per-command reference (including which `agent-browser` commands are
+deliberately not ported and why), and **[native/README.md](native/README.md)**
+for the build/IPC internals and a worked perceive→act→verify example.
 
 ### The `starfish-control` skill
 
