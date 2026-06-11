@@ -43,17 +43,26 @@ shared with the Node CLI (`bin/starfish-cdp.mjs`).
 | | `type` | `<selector> <text>` | `DOM.focus` + `Input.insertText` |
 | | `fill` | `<selector> <text>` | clear value + `insertText` + fire `input`/`change` |
 | | `focus` | `<selector>` | `DOM.focus` (JS `el.focus()` fallback) |
-| | `press` | `<key>` | `Input.dispatchKeyEvent` (named keys, single chars, modifiers) |
+| | `press` | `<key>` | `Input.dispatchKeyEvent` down+up (named keys, single chars, modifiers) |
+| | `keydown` / `keyup` | `<key>` | a single half of a key event |
+| | `keyboard` | `type <text>` / `inserttext <text>` | per-char key events at focus / raw `Input.insertText` |
+| | `mouse` | `move x y` / `down\|up [btn]` / `wheel dy [dx]` | raw `Input.dispatchMouseEvent` |
 | | `select` | `<selector> <value>` | set `<select>.value` + `change` event |
 | | `check` | `<selector>` | tick a checkbox/radio + `change` event |
 | | `uncheck` | `<selector>` | untick a checkbox/radio + `change` event |
 | | `scroll` | `<dir> [px] [--selector S]` | `scrollBy` on window or an element |
+| | `scrollintoview` | `<selector>` | `el.scrollIntoView({block:'center'})` |
+| | `highlight` | `<selector>` | transient red outline (2 s) + bounding box |
 | **Navigate** | `back` | — | `Page.getNavigationHistory` + `navigateToHistoryEntry` (−1) |
 | | `forward` | — | history forward (+1) |
 | | `reload` | — | re-navigate the current url |
+| | `pushstate` | `<url>` | SPA nav: Next.js router if present, else `history.pushState` + `popstate` |
 | | `wait` | `<sel\|ms>` / `--text T` / `--fn EXPR` | poll until visible/elapsed/present/truthy (`--timeout MS`, default 5000) |
 | **State** | `cookies` | `[list\|set n v\|clear]` | `Network.getAllCookies`/`setCookie`, `Storage.clearDataForOrigin` |
 | | `storage` | `<local\|session> [key\|set k v\|clear]` | read/write `localStorage`/`sessionStorage` |
+| | `set` | `offline [on\|off]` | `Network.emulateNetworkConditions` (other `set.*` are rejected — ack-only) |
+| | `addinitscript` | `<js>` | `Page.addScriptToEvaluateOnNewDocument` — **ACK-ONLY: not executed** on this build |
+| | `removeinitscript` | `<identifier>` | `Page.removeScriptToEvaluateOnNewDocument` |
 | **Misc** | `help` | — | usage |
 
 ---
@@ -99,11 +108,20 @@ $B type '#name' Starfish        # focus + insertText (appends)
 $B fill '#name' Starfish        # clear, then type, then fire input/change
 $B focus '#name'                # just focus
 $B press Enter                  # Enter / Tab / Escape / ArrowDown / a / Control+a
+$B keydown Shift                # hold a key down …
+$B keyup Shift                  # … and release it
+$B keyboard type "hello world" # per-char key events at the current focus
+$B keyboard inserttext "héllo"  # insert text with no key events
+$B mouse move 120 240           # move the pointer
+$B mouse down ; $B mouse up      # press/release the left button at last point
+$B mouse wheel 240              # scroll wheel by deltaY
 $B select '#country' KR         # set a <select> value
 $B check '#agree'               # tick a checkbox/radio
 $B uncheck '#agree'             # untick
 $B scroll down 500              # window.scrollBy(0, 500)
 $B scroll right 200 --selector '#pane'   # scroll an element
+$B scrollintoview '#footer'     # bring an element into view
+$B highlight '#go'              # flash a red outline for 2s
 ```
 
 `press` understands the common named keys (`Enter`, `Tab`, `Backspace`,
@@ -133,6 +151,7 @@ $B goto https://example.com     # navigate (re-injects the keep-alive timer)
 $B back                         # history back
 $B forward                      # history forward
 $B reload                       # re-navigate the current url
+$B pushstate /dashboard         # SPA client-side nav (HTTP origin only)
 $B wait '#ready'                # until the element is visible (≤5s)
 $B wait 800                     # a plain timer (milliseconds)
 $B wait --text 'Welcome'        # until body text contains a substring
@@ -155,11 +174,26 @@ $B storage local token          # one key
 $B storage local set token xyz  # write a key
 $B storage local clear          # wipe localStorage
 $B storage session ...          # same four forms for sessionStorage
+$B set offline on               # go offline (next navigation fails)
+$B set offline off              # back online
+$B addinitscript 'window.x=1'   # register a per-document script (see note)
+$B removeinitscript SCRIPT-1    # unregister it
 ```
 
 > Web storage and cookies are only meaningful on a real **HTTP origin** —
 > `data:`/`about:` origins are opaque, so `localStorage` access throws and
 > `cookies` is empty there (ANALYSIS §3 DOMStorage/Storage).
+
+> `set offline` is the only `set.*` knob with real effect (it drives
+> `Network.emulateNetworkConditions`, verified — the next navigation fails with
+> `net::ERR_INTERNET_DISCONNECTED`). `set viewport/device/geo/media/headers/
+> credentials` are rejected with a message: `Emulation.*` is **ack-only** on
+> this build, and the viewport is fixed at launch via `--width/--height`.
+
+> ⚠️ **`addinitscript` is ACK-ONLY here (verified):** Starfish returns an
+> `identifier` for `Page.addScriptToEvaluateOnNewDocument` but never runs the
+> script on subsequent documents. The command prints a NOTE saying so. Until a
+> build honors it, use `eval` right after each navigation instead.
 
 ## Raw CDP escape hatch
 
@@ -207,7 +241,7 @@ vocabulary. Below is the **complete** top-level command list (from
 - **✗ not supported** — the Starfish binary or the stateless-per-call model
   can't back it (see [`ANALYSIS.md`](../ANALYSIS.md) §0–§3).
 
-### ✅ Implemented (29 commands)
+### ✅ Implemented (37 commands)
 
 | agent-browser | native | notes |
 | --- | --- | --- |
@@ -215,6 +249,7 @@ vocabulary. Below is the **complete** top-level command list (from
 | `back` | `back` | |
 | `forward` | `forward` | |
 | `reload` | `reload` | re-navigates the current URL. |
+| `pushstate` | `pushstate` | Next.js router if present, else `history.pushState` + `popstate`. **Needs an HTTP origin** — `data:` is opaque and throws. |
 | `click` | `click` | `--new-tab` unsupported (single WebView). |
 | `dblclick` | `dblclick` | also dispatches a DOM `dblclick` (engine won't synthesize it). |
 | `hover` | `hover` | |
@@ -224,7 +259,13 @@ vocabulary. Below is the **complete** top-level command list (from
 | `check` / `uncheck` | `check` / `uncheck` | via JS + `change` event. |
 | `select` | `select` | |
 | `press` / `key` | `press` | named keys, single chars, modifier chords (see the `press` quirk above). |
+| `keydown` / `keyup` | `keydown` / `keyup` | one half of a key event each. |
+| `keyboard type` | `keyboard type` | per-character key events at the current focus. |
+| `keyboard inserttext` | `keyboard inserttext` | raw `Input.insertText`, no key events. |
+| `mouse move/down/up/wheel` | `mouse …` | raw `Input.dispatchMouseEvent`. |
 | `scroll` | `scroll` | window or `--selector`. |
+| `scrollintoview` / `scrollinto` | `scrollintoview` | `el.scrollIntoView({block:'center'})`. |
+| `highlight` | `highlight` | transient red outline (2 s); no DevTools overlay surface, so it mutates `style.outline`. |
 | `wait` | `wait` | selector / ms / `--text` / `--fn` / `--timeout`. |
 | `screenshot` | `screenshot` | real PNG pixels on the GL build. |
 | `pdf` | `pdf` | |
@@ -235,21 +276,20 @@ vocabulary. Below is the **complete** top-level command list (from
 | `is visible\|enabled\|checked` | `is <state>` | |
 | `cookies` (list/set/clear) | `cookies` | meaningful on an HTTP origin. |
 | `storage local\|session` | `storage` | get/set/dump/clear. |
+| `set offline [on\|off]` | `set offline` | `Network.emulateNetworkConditions` — the one `set.*` with real effect; others are rejected with a clear message (Emulation is ack-only). |
 | `close` / `quit` / `exit` | `stop` | native manages the process lifecycle (`start`/`stop`), so teardown is `stop`, not a per-page `close`. |
 | — | `start` / `status` / `cdp` | native-only: process lifecycle + raw CDP passthrough. |
 
-### ◐ Not wrapped, but reachable today (via `cdp` / `eval`)
+### ◐ Implemented but ACK-ONLY on this build (no effect)
 
-| agent-browser | how to do it now | a wrapper could be added? |
+| agent-browser | native | finding |
 | --- | --- | --- |
-| `keydown` / `keyup` | `cdp Input.dispatchKeyEvent '{"type":"keyDown",...}'` | yes — `press` already does down+up. |
-| `keyboard type` / `keyboard inserttext` | `cdp Input.insertText '{"text":"…"}'` (also what `type`/`fill` use) | yes. |
-| `scrollintoview` | `eval 'document.querySelector(sel).scrollIntoView()'` | yes (easy). |
-| `mouse move/down/up/wheel` | `cdp Input.dispatchMouseEvent '{…}'` | yes (Input is verified). |
-| `set offline [on\|off]` | `cdp Network.emulateNetworkConditions '{"offline":true,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}'` | yes — the one `set` that has real effect. |
-| `pushstate <url>` | `eval 'history.pushState({}, "", url)'` | yes. |
-| `addinitscript` / `removeinitscript` | `cdp Page.addScriptToEvaluateOnNewDocument '{"source":"…"}'` | yes (source-level method; treat as best-effort). |
-| `highlight <sel>` | `eval` to set an outline style (transient, no overlay) | partially — no native overlay surface. |
+| `addinitscript` / `removeinitscript` | `addinitscript` / `removeinitscript` | `Page.addScriptToEvaluateOnNewDocument` returns an `identifier` but the script is **never executed** on new documents (verified no-op via E2E). The wrappers exist and print a NOTE; they'll start working if a future build honors the method. Until then, `eval` after each navigation is the substitute. |
+
+### Reachable via `cdp` / `eval` (no wrapper, by choice)
+
+| agent-browser | how to do it now | why no wrapper |
+| --- | --- | --- |
 | `drag` / `tap` / `swipe` | `cdp Input.dispatchDragEvent` / `dispatchTouchEvent` | **ack-only** — they return `{}` but side effects are not applied (ANALYSIS §3 Input), so a wrapper would look like it works without doing anything. |
 | `find role/text/label/...` | `snapshot` for roles/names, then act by CSS selector; or `eval` a custom query | `DOM.performSearch` is **absent** (-32601), so a faithful `find` can't use it — only an `eval`/AX-tree emulation. |
 
@@ -292,21 +332,27 @@ All commands compile clean (`npm run build:native`) and were exercised
   PNG pixels), `pdf` (`%PDF-` header)
 - ✅ act: `click` (fires onclick), `dblclick` (fires the `dblclick` handler),
   `hover`, `type`, `fill` (clear+type+`input`/`change`), `focus`, `press`
-  (named keys + single chars + chord shortcuts), `select`, `check`/`uncheck`,
-  `scroll`
-- ✅ navigate: `goto`, `back`, `forward`, `reload`, `wait` (selector/ms/`--text`/
-  `--fn`/timeout)
+  (named keys + single chars + chord shortcuts), `keydown`/`keyup` (real
+  `keydown` event observed), `keyboard type`/`inserttext`, `mouse`
+  move/down/up/wheel, `select`, `check`/`uncheck`, `scroll`, `scrollintoview`
+  (page scrolled), `highlight`
+- ✅ navigate: `goto`, `back`, `forward`, `reload`, `pushstate` (URL changes +
+  `popstate` fires on an HTTP origin), `wait` (selector/ms/`--text`/`--fn`/timeout)
 - ✅ state on an HTTP origin: `cookies` (list/set/clear), `storage` local &
-  session (get/set/dump/clear). On a `data:`/`about:` origin storage is opaque
-  (empty) and cookies are empty — expected per ANALYSIS §3.
+  session (get/set/dump/clear), `set offline on/off` (+ other `set.*` rejected).
+  On a `data:`/`about:` origin storage is opaque (empty), cookies are empty, and
+  `pushstate` throws — expected per ANALYSIS §3.
 
-Two issues found during E2E were **fixed**: `get styles` now uses
+Three issues found during E2E were resolved: `get styles` now uses
 `CSS.getComputedStyleForNode` (Starfish's `getComputedStyle` exposes no indexed
 iteration, so the JS-enumeration approach returned `{}`); `dblclick` now also
 dispatches a DOM `dblclick` event (the engine fires two `click`s but no
-`dblclick` from synthetic input). One engine quirk is documented and not
-fixable at the CLI layer: a modifier chord on a printable letter still inserts
-the letter (see the `press` note above).
+`dblclick` from synthetic input); and `addinitscript` was found to be
+**ack-only** (the engine returns an identifier but never executes the script),
+so its wrapper now prints a NOTE and it is classified accordingly above. Two
+engine quirks are documented and not fixable at the CLI layer: a modifier chord
+on a printable letter still inserts the letter (see the `press` note), and
+`addinitscript` does not run.
 
 > **Build/run note:** the verified build was launched with
 > `STARFISH_BIN=…/out/x11/debug/bin/Starfish`. That tree bundles

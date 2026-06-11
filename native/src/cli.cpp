@@ -1204,48 +1204,111 @@ void keyFields(const std::string& key, std::string& cdpKey, std::string& code,
   }
 }
 
-int cmdPress(const std::vector<std::string>& args) {
-  if (args.empty()) return die("usage: press <key>   e.g. Enter, Tab, a, Control+a");
-  // Parse modifiers: Alt=1, Ctrl=2, Meta=4, Shift=8 (CDP bitmask).
-  std::string spec = args[0];
+// Parse a "Control+a" style spec into modifiers + the resolved key fields.
+struct KeySpec {
   int modifiers = 0;
+  std::string key, code, text;
+  int vk = 0;
+};
+KeySpec parseKeySpec(const std::string& spec) {
+  KeySpec k;
   std::string keyName = spec;
   size_t pos;
   while ((pos = keyName.find('+')) != std::string::npos && pos > 0) {
     std::string mod = keyName.substr(0, pos);
     std::string rest = keyName.substr(pos + 1);
     if (rest.empty()) break;  // trailing '+' is itself the key
-    if (mod == "Alt") modifiers |= 1;
-    else if (mod == "Control" || mod == "Ctrl") modifiers |= 2;
-    else if (mod == "Meta" || mod == "Cmd") modifiers |= 4;
-    else if (mod == "Shift") modifiers |= 8;
+    if (mod == "Alt") k.modifiers |= 1;
+    else if (mod == "Control" || mod == "Ctrl") k.modifiers |= 2;
+    else if (mod == "Meta" || mod == "Cmd") k.modifiers |= 4;
+    else if (mod == "Shift") k.modifiers |= 8;
     else break;  // not a modifier — treat whole remainder as the key
     keyName = rest;
   }
-  std::string cdpKey, code, text;
-  int vk = 0;
-  keyFields(keyName, cdpKey, code, vk, text);
+  keyFields(keyName, k.key, k.code, k.vk, k.text);
+  return k;
+}
+// Build a keyDown/keyUp CDP event from a KeySpec. `text` rides only on keyDown
+// and only for an unmodified printable key (Ctrl+a must not insert 'a').
+json keyEvent(const KeySpec& k, bool down) {
+  json ev = {{"type", down ? "keyDown" : "keyUp"},
+             {"key", k.key},
+             {"modifiers", k.modifiers}};
+  if (!k.code.empty()) ev["code"] = k.code;
+  if (k.vk) {
+    ev["windowsVirtualKeyCode"] = k.vk;
+    ev["nativeVirtualKeyCode"] = k.vk;
+  }
+  if (down && !k.text.empty() && (k.modifiers & ~8) == 0) ev["text"] = k.text;
+  return ev;
+}
 
+int cmdPress(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: press <key>   e.g. Enter, Tab, a, Control+a");
+  KeySpec k = parseKeySpec(args[0]);
   Attached* a = attach();
   if (!a) return 1;
   json result;
   std::string err;
-  json down = {{"type", "keyDown"}, {"key", cdpKey}, {"modifiers", modifiers}};
-  if (!code.empty()) down["code"] = code;
-  if (vk) {
-    down["windowsVirtualKeyCode"] = vk;
-    down["nativeVirtualKeyCode"] = vk;
+  a->cdp->sendAndWait("Input.dispatchKeyEvent", keyEvent(k, true), a->sessionId,
+                      5000, result, err);
+  a->cdp->sendAndWait("Input.dispatchKeyEvent", keyEvent(k, false), a->sessionId,
+                      5000, result, err);
+  std::cout << "pressed " << args[0] << "\n";
+  delete a;
+  return 0;
+}
+
+int cmdKeyHalf(const std::vector<std::string>& args, bool down,
+               const char* label) {
+  if (args.empty()) return die(std::string("usage: ") + label + " <key>");
+  KeySpec k = parseKeySpec(args[0]);
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  a->cdp->sendAndWait("Input.dispatchKeyEvent", keyEvent(k, down), a->sessionId,
+                      5000, result, err);
+  std::cout << label << " " << args[0] << "\n";
+  delete a;
+  return 0;
+}
+
+// ---- keyboard type <text> / keyboard inserttext <text> ----
+//
+// `keyboard type` drives real per-character key events at the current focus
+// (no selector); `keyboard inserttext` inserts text with no key events.
+int cmdKeyboard(const std::vector<std::string>& args) {
+  if (args.size() < 2)
+    return die("usage: keyboard <type|inserttext> <text>");
+  std::string mode = args[0];
+  std::string text;
+  for (size_t i = 1; i < args.size(); i++) {
+    if (i > 1) text += " ";
+    text += args[i];
   }
-  // Only send `text` for an unmodified printable key (Ctrl+a must not insert 'a').
-  if (!text.empty() && (modifiers & ~8) == 0) down["text"] = text;
-  json up = down;
-  up["type"] = "keyUp";
-  up.erase("text");
-  a->cdp->sendAndWait("Input.dispatchKeyEvent", down, a->sessionId, 5000, result,
-                      err);
-  a->cdp->sendAndWait("Input.dispatchKeyEvent", up, a->sessionId, 5000, result,
-                      err);
-  std::cout << "pressed " << spec << "\n";
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  if (mode == "inserttext") {
+    a->cdp->sendAndWait("Input.insertText", {{"text", text}}, a->sessionId, 5000,
+                        result, err);
+    std::cout << "inserted text (" << text.size() << " chars)\n";
+  } else if (mode == "type") {
+    for (char c : text) {
+      KeySpec k = parseKeySpec(std::string(1, c));
+      a->cdp->sendAndWait("Input.dispatchKeyEvent", keyEvent(k, true),
+                          a->sessionId, 5000, result, err);
+      a->cdp->sendAndWait("Input.dispatchKeyEvent", keyEvent(k, false),
+                          a->sessionId, 5000, result, err);
+    }
+    std::cout << "typed " << text.size() << " chars\n";
+  } else {
+    std::cerr << "usage: keyboard <type|inserttext> <text>\n";
+    delete a;
+    return 1;
+  }
   delete a;
   return 0;
 }
@@ -1690,6 +1753,243 @@ int cmdPdf(const std::vector<std::string>& args) {
   return rc;
 }
 
+// ---- scrollintoview <selector> ----
+
+int cmdScrollIntoView(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: scrollintoview <selector>");
+  std::string selector = args[0];
+  std::string expr =
+      "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+      ");if(!el)return null;el.scrollIntoView({block:'center',inline:'center'});"
+      "return true;})()";
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "scrollintoview failed: " << err << "\n";
+    rc = 1;
+  } else if (v.is_null()) {
+    std::cerr << "element not found: " << selector << "\n";
+    rc = 1;
+  } else {
+    std::cout << "scrolled " << selector << " into view\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- mouse move|down|up|wheel ----
+
+int cmdMouse(const std::vector<std::string>& args) {
+  if (args.empty())
+    return die("usage: mouse <move x y|down [button]|up [button]|wheel dy [dx]>");
+  std::string sub = args[0];
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  auto button = [&](size_t i) -> std::string {
+    return args.size() > i ? args[i] : "left";
+  };
+  auto buttonsMask = [](const std::string& b) -> int {
+    if (b == "right") return 2;
+    if (b == "middle") return 4;
+    return 1;  // left
+  };
+  if (sub == "move") {
+    if (args.size() < 3) { rc = 1; std::cerr << "usage: mouse move <x> <y>\n"; }
+    else {
+      double x = atof(args[1].c_str()), y = atof(args[2].c_str());
+      a->cdp->sendAndWait(
+          "Input.dispatchMouseEvent",
+          {{"type", "mouseMoved"}, {"x", x}, {"y", y}, {"buttons", 0}},
+          a->sessionId, 5000, result, err);
+      std::cout << "moved mouse to (" << (long)x << "," << (long)y << ")\n";
+    }
+  } else if (sub == "down" || sub == "up") {
+    // Position is the last moved point; CDP needs x/y, so read them as optional
+    // 2nd/3rd args, else default 0,0. Most callers pair this with `mouse move`.
+    std::string b = button(1);
+    double x = args.size() > 2 ? atof(args[2].c_str()) : 0;
+    double y = args.size() > 3 ? atof(args[3].c_str()) : 0;
+    bool down = (sub == "down");
+    a->cdp->sendAndWait("Input.dispatchMouseEvent",
+                        {{"type", down ? "mousePressed" : "mouseReleased"},
+                         {"x", x},
+                         {"y", y},
+                         {"button", b},
+                         {"clickCount", 1},
+                         {"buttons", down ? buttonsMask(b) : 0}},
+                        a->sessionId, 5000, result, err);
+    std::cout << "mouse " << sub << " " << b << "\n";
+  } else if (sub == "wheel") {
+    if (args.size() < 2) { rc = 1; std::cerr << "usage: mouse wheel <dy> [dx]\n"; }
+    else {
+      double dy = atof(args[1].c_str());
+      double dx = args.size() > 2 ? atof(args[2].c_str()) : 0;
+      a->cdp->sendAndWait("Input.dispatchMouseEvent",
+                          {{"type", "mouseWheel"},
+                           {"x", 0},
+                           {"y", 0},
+                           {"deltaX", dx},
+                           {"deltaY", dy}},
+                          a->sessionId, 5000, result, err);
+      std::cout << "wheel dx=" << (long)dx << " dy=" << (long)dy << "\n";
+    }
+  } else {
+    std::cerr << "usage: mouse <move|down|up|wheel> …\n";
+    rc = 1;
+  }
+  delete a;
+  return rc;
+}
+
+// ---- set offline [on|off] (the one Emulation knob with real effect) ----
+
+int cmdSet(const std::vector<std::string>& args) {
+  if (args.empty())
+    return die("usage: set offline [on|off]   (other set.* knobs are ack-only on Starfish)");
+  std::string sub = args[0];
+  if (sub != "offline") {
+    return die("set " + sub +
+               " is not supported on Starfish (Emulation.* is ack-only — "
+               "viewport is fixed at launch via --width/--height; see COMMANDS.md)");
+  }
+  bool offline = true;
+  if (args.size() > 1 && (args[1] == "off" || args[1] == "false"))
+    offline = false;
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  a->cdp->sendAndWait("Network.enable", json::object(), a->sessionId, 5000,
+                      result, err);
+  if (!a->cdp->sendAndWait("Network.emulateNetworkConditions",
+                           {{"offline", offline},
+                            {"latency", 0},
+                            {"downloadThroughput", -1},
+                            {"uploadThroughput", -1}},
+                           a->sessionId, 5000, result, err)) {
+    std::cerr << "set offline failed: " << err << "\n";
+    rc = 1;
+  } else {
+    std::cout << "offline " << (offline ? "on" : "off") << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- pushstate <url> (SPA client-side navigation) ----
+
+int cmdPushState(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: pushstate <url>");
+  std::string url = args[0];
+  // Mirror agent-browser: prefer a Next.js router if present, else
+  // history.pushState + a popstate event so SPA routers re-render.
+  std::string expr =
+      "(function(){try{if(window.next&&window.next.router&&window.next.router."
+      "push){window.next.router.push(" + jsStringLiteral(url) +
+      ");return 'next-router';}history.pushState({},'', " + jsStringLiteral(url) +
+      ");window.dispatchEvent(new PopStateEvent('popstate'));return "
+      "'pushstate';}catch(e){return 'error: '+e;}})()";
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "pushstate failed: " << err << "\n";
+    rc = 1;
+  } else {
+    std::cout << "pushstate (" << valueToString(v) << ") -> " << currentUrl(a)
+              << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- addinitscript <js> / removeinitscript <identifier> ----
+
+int cmdAddInitScript(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: addinitscript <js>");
+  std::string src;
+  for (size_t i = 0; i < args.size(); i++) {
+    if (i) src += " ";
+    src += args[i];
+  }
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  if (!a->cdp->sendAndWait("Page.addScriptToEvaluateOnNewDocument",
+                           {{"source", src}}, a->sessionId, 5000, result, err)) {
+    std::cerr << "addinitscript failed: " << err << "\n";
+    rc = 1;
+  } else {
+    std::string id = result.value("identifier", "");
+    std::cout << "added init script" << (id.empty() ? "" : (" identifier=" + id))
+              << "\n";
+    std::cout << "NOTE: this Starfish build ACKs Page.addScriptToEvaluateOn"
+                 "NewDocument but does NOT execute it on new documents (verified "
+                 "no-op); use `eval` after each navigation instead\n";
+  }
+  delete a;
+  return rc;
+}
+
+int cmdRemoveInitScript(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: removeinitscript <identifier>");
+  Attached* a = attach();
+  if (!a) return 1;
+  json result;
+  std::string err;
+  int rc = 0;
+  if (!a->cdp->sendAndWait("Page.removeScriptToEvaluateOnNewDocument",
+                           {{"identifier", args[0]}}, a->sessionId, 5000, result,
+                           err)) {
+    std::cerr << "removeinitscript failed: " << err << "\n";
+    rc = 1;
+  } else {
+    std::cout << "removed init script " << args[0] << "\n";
+  }
+  delete a;
+  return rc;
+}
+
+// ---- highlight <selector> (transient outline; no overlay surface) ----
+
+int cmdHighlight(const std::vector<std::string>& args) {
+  if (args.empty()) return die("usage: highlight <selector>");
+  std::string selector = args[0];
+  std::string expr =
+      "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
+      ");if(!el)return null;var p=el.style.outline;el.style.outline='3px solid "
+      "red';setTimeout(function(){el.style.outline=p;},2000);var "
+      "r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r."
+      "height};})()";
+  Attached* a = attach();
+  if (!a) return 1;
+  json v;
+  std::string err;
+  int rc = 0;
+  if (!evalValue(a, expr, v, err)) {
+    std::cerr << "highlight failed: " << err << "\n";
+    rc = 1;
+  } else if (v.is_null()) {
+    std::cerr << "element not found: " << selector << "\n";
+    rc = 1;
+  } else {
+    std::cout << "highlighted " << selector << " " << jsonStringify(v) << "\n";
+  }
+  delete a;
+  return rc;
+}
+
 void usage() {
   std::cout
       << "starfish-cdp-native — drive a headless Starfish browser over CDP\n\n"
@@ -1716,20 +2016,30 @@ void usage() {
          "  fill <selector> <text>         clear + type + fire input/change\n"
          "  focus <selector>               focus element\n"
          "  press <key>                    key event (Enter, Tab, a, Control+a)\n"
+         "  keydown <key> | keyup <key>    half key events\n"
+         "  keyboard type <text>           per-char key events at focus\n"
+         "  keyboard inserttext <text>     insert text (no key events)\n"
+         "  mouse move x y | down|up [btn] | wheel dy [dx]   raw mouse\n"
          "  select <selector> <value>      set <select> value + change event\n"
          "  check <selector>               tick a checkbox/radio\n"
          "  uncheck <selector>             untick a checkbox/radio\n"
-         "  scroll <dir> [px] [--selector S]   up|down|left|right (default 300px)\n\n"
+         "  scroll <dir> [px] [--selector S]   up|down|left|right (default 300px)\n"
+         "  scrollintoview <selector>      scroll element into view\n"
+         "  highlight <selector>           transient red outline (2s)\n\n"
          "Navigate:\n"
          "  back                           history back\n"
          "  forward                        history forward\n"
          "  reload                         re-navigate current url\n"
+         "  pushstate <url>                SPA client-side navigation\n"
          "  wait <sel|ms>                  wait for element/time\n"
          "  wait --text T | --fn EXPR      wait for text / JS condition\n"
          "                                 (all wait forms take --timeout MS)\n\n"
          "State:\n"
          "  cookies [list|set n v|clear]   Network/Storage cookies\n"
-         "  storage <local|session> [key|set k v|clear]   web storage\n";
+         "  storage <local|session> [key|set k v|clear]   web storage\n"
+         "  set offline [on|off]           toggle offline (other set.* ack-only)\n"
+         "  addinitscript <js>             run script on every new document\n"
+         "  removeinitscript <id>          remove a registered init script\n";
 }
 
 }  // namespace
@@ -1772,16 +2082,27 @@ int runCli(int argc, char** argv) {
   if (cmd == "fill") return cmdFill(positional());
   if (cmd == "focus") return cmdFocus(positional());
   if (cmd == "press") return cmdPress(positional());
+  if (cmd == "keydown") return cmdKeyHalf(positional(), true, "keydown");
+  if (cmd == "keyup") return cmdKeyHalf(positional(), false, "keyup");
+  if (cmd == "keyboard") return cmdKeyboard(positional());
   if (cmd == "select") return cmdSelect(positional());
   if (cmd == "check") return setChecked(positional(), true, "check");
   if (cmd == "uncheck") return setChecked(positional(), false, "uncheck");
   if (cmd == "scroll") return cmdScroll(args);   // own --selector parsing
+  if (cmd == "scrollintoview" || cmd == "scrollinto")
+    return cmdScrollIntoView(positional());
+  if (cmd == "mouse") return cmdMouse(positional());
+  if (cmd == "highlight") return cmdHighlight(positional());
   if (cmd == "back") return navHistory(-1, "back");
   if (cmd == "forward") return navHistory(1, "forward");
   if (cmd == "reload") return cmdReload();
+  if (cmd == "pushstate") return cmdPushState(positional());
   if (cmd == "wait") return cmdWait(args);        // own flag parsing
   if (cmd == "cookies") return cmdCookies(positional());
   if (cmd == "storage") return cmdStorage(positional());
+  if (cmd == "set") return cmdSet(positional());
+  if (cmd == "addinitscript") return cmdAddInitScript(args);  // raw js
+  if (cmd == "removeinitscript") return cmdRemoveInitScript(positional());
   if (cmd == "help" || cmd == "-h" || cmd == "--help") {
     usage();
     return 0;
