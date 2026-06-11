@@ -110,8 +110,21 @@ $B scroll right 200 --selector '#pane'   # scroll an element
 `Delete`, `Escape`, `ArrowUp/Down/Left/Right`, `Home`, `End`, `PageUp`,
 `PageDown`, `Space`), any single printable character, and modifier chords
 (`Control+a`, `Shift+Tab`, `Meta+c`). Modifiers map to CDP's bitmask
-(Alt=1, Ctrl=2, Meta=4, Shift=8); a modified key does **not** emit `text`, so
-`Control+a` selects-all rather than typing `a`.
+(Alt=1, Ctrl=2, Meta=4, Shift=8); the chord's `keydown`/`keyup` carry the right
+`key`/`code`/`modifiers`, so app shortcut handlers (`e.ctrlKey && e.key==='a'`)
+fire correctly.
+
+> ⚠️ **Engine quirk (verified):** Starfish inserts a character whenever the
+> `key` is a single printable char, **regardless of modifiers** — so
+> `press Control+a` *also* types an `a` into a focused input (it does not
+> suppress text the way a real browser does). Use it for chords whose base key
+> is non-printable (`Control+Enter`, `Shift+Tab`) without side effects; for
+> printable-letter chords, expect the letter to land in any focused field.
+
+> `dblclick` fires two real `click`s via synthetic mouse input **and** then
+> dispatches a DOM `dblclick` event — the engine does not coalesce synthetic
+> clicks into a `dblclick` on its own (verified), so the command adds it
+> explicitly to make `dblclick` handlers run.
 
 ## Navigate
 
@@ -204,9 +217,34 @@ server implements, including ones with no convenience wrapper.
 
 ## Verification status
 
-All commands compile clean (`npm run build:native`) and validate their
-arguments. Each maps to a CDP method that ANALYSIS.md records as
-**verified-working** on the target binary (Runtime/DOM/Input/Page/CSS/
-Accessibility/Network/Storage). End-to-end behavior should be re-checked
-against a live Starfish build (`STARFISH_BIN` or `starfish.config.json`
-`defaultBinary`) with the worked example above.
+All commands compile clean (`npm run build:native`) and were exercised
+**end-to-end against a live `glib_cairo_gl` Starfish build** (debug, X11 shell,
+`STARFISH_ENABLE_CDP=1`) over a `data:` fixture and a local HTTP origin:
+
+- ✅ perceive: `text`, `html`, `eval`, `cdp`, `get` (title/url/value/attr/count/
+  box/styles), `is` (visible/enabled/checked), `snapshot`, `screenshot` (real
+  PNG pixels), `pdf` (`%PDF-` header)
+- ✅ act: `click` (fires onclick), `dblclick` (fires the `dblclick` handler),
+  `hover`, `type`, `fill` (clear+type+`input`/`change`), `focus`, `press`
+  (named keys + single chars + chord shortcuts), `select`, `check`/`uncheck`,
+  `scroll`
+- ✅ navigate: `goto`, `back`, `forward`, `reload`, `wait` (selector/ms/`--text`/
+  `--fn`/timeout)
+- ✅ state on an HTTP origin: `cookies` (list/set/clear), `storage` local &
+  session (get/set/dump/clear). On a `data:`/`about:` origin storage is opaque
+  (empty) and cookies are empty — expected per ANALYSIS §3.
+
+Two issues found during E2E were **fixed**: `get styles` now uses
+`CSS.getComputedStyleForNode` (Starfish's `getComputedStyle` exposes no indexed
+iteration, so the JS-enumeration approach returned `{}`); `dblclick` now also
+dispatches a DOM `dblclick` event (the engine fires two `click`s but no
+`dblclick` from synthetic input). One engine quirk is documented and not
+fixable at the CLI layer: a modifier chord on a printable letter still inserts
+the letter (see the `press` note above).
+
+> **Build/run note:** the verified build was launched with
+> `STARFISH_BIN=…/out/x11/debug/bin/Starfish`. That tree bundles
+> `libssl.so.3`/`libcrypto.so.3` exporting only `OPENSSL_3.0.0`, which collides
+> with a system `libcurl` needing `OPENSSL_3.2.0`; preloading the system libs
+> (`LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libssl.so.3:…/libcrypto.so.3`) resolves
+> it. This is a packaging detail of that particular build, not a CLI concern.

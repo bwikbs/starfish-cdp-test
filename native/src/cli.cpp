@@ -907,11 +907,34 @@ int cmdGet(const std::vector<std::string>& args) {
   }
   if (field == "styles") {
     if (selector.empty()) return die("usage: get styles <selector>");
-    std::string expr =
-        "(function(){var el=document.querySelector(" + jsStringLiteral(selector) +
-        ");if(!el)return null;var cs=getComputedStyle(el);var o={};for(var "
-        "i=0;i<cs.length;i++){o[cs[i]]=cs.getPropertyValue(cs[i]);}return o;})()";
-    return evalAndPrint("get styles", selector, expr);
+    // Starfish's getComputedStyle exposes no indexed iteration (cs.length===0),
+    // so enumerate via CDP CSS.getComputedStyleForNode (ANALYSIS §3 CSS ✅).
+    Attached* a = attach();
+    if (!a) return 1;
+    std::string err;
+    int rc = 0;
+    int nodeId = querySelectorNode(a, selector, err);
+    if (!nodeId) {
+      std::cerr << "element not found: " << selector << "\n";
+      delete a;
+      return 1;
+    }
+    json css;
+    a->cdp->sendAndWait("CSS.enable", json::object(), a->sessionId, 5000, css,
+                        err);
+    if (!a->cdp->sendAndWait("CSS.getComputedStyleForNode", {{"nodeId", nodeId}},
+                             a->sessionId, 5000, css, err) ||
+        !css.contains("computedStyle")) {
+      std::cerr << "get styles failed: " << err << "\n";
+      rc = 1;
+    } else {
+      json obj = json::object();
+      for (const auto& p : css["computedStyle"])
+        obj[p.value("name", "")] = p.value("value", "");
+      std::cout << jsonStringify(obj) << "\n";
+    }
+    delete a;
+    return rc;
   }
   return die("unknown get field: " + field +
              " (title|url|value|attr|count|box|styles)");
@@ -1121,6 +1144,15 @@ int cmdDblclick(const std::vector<std::string>& args) {
                            {"buttons", 0}},
                           a->sessionId, 5000, result, err);
     }
+    // The engine fires two `click`s but does not synthesize a DOM `dblclick`
+    // from synthetic input, so dispatch one explicitly so dblclick handlers run.
+    std::string dblExpr = "(function(){var el=document.querySelector(" +
+                          jsStringLiteral(selector) +
+                          ");if(el)el.dispatchEvent(new MouseEvent('dblclick',{"
+                          "bubbles:true,cancelable:true}));})()";
+    json dr;
+    a->cdp->sendAndWait("Runtime.evaluate", {{"expression", dblExpr}},
+                        a->sessionId, 5000, dr, err);
     std::cout << "double-clicked " << selector << " at (" << (long)(x + 0.5)
               << "," << (long)(y + 0.5) << ")\n";
   } while (false);
