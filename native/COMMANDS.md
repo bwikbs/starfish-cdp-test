@@ -195,20 +195,86 @@ $B stop
 
 ---
 
-## What is *not* ported (and why)
+## agent-browser command coverage
 
-These `agent-browser` commands are intentionally **omitted** — the Starfish CDP
-binary cannot back them (see [`ANALYSIS.md`](../ANALYSIS.md) §0–§3):
+The native CLI tracks [`agent-browser`](../../agent-browser/README.md)'s
+vocabulary. Below is the **complete** top-level command list (from
+`agent-browser`'s `parse_command`), classified by status against this CLI:
 
-| agent-browser feature | Why not ported |
+- **✅ implemented** — a native wrapper exists (verified E2E unless noted).
+- **◐ not wrapped, reachable** — no convenience wrapper, but the underlying CDP
+  works, so it's doable today via `cdp <Domain.method>` / `eval`.
+- **✗ not supported** — the Starfish binary or the stateless-per-call model
+  can't back it (see [`ANALYSIS.md`](../ANALYSIS.md) §0–§3).
+
+### ✅ Implemented (29 commands)
+
+| agent-browser | native | notes |
+| --- | --- | --- |
+| `open <url>` / `goto` / `navigate` | `goto <url>` | `open` with no URL ≈ `start` (launches on a keep-alive page); there is no separate no-nav `open`. |
+| `back` | `back` | |
+| `forward` | `forward` | |
+| `reload` | `reload` | re-navigates the current URL. |
+| `click` | `click` | `--new-tab` unsupported (single WebView). |
+| `dblclick` | `dblclick` | also dispatches a DOM `dblclick` (engine won't synthesize it). |
+| `hover` | `hover` | |
+| `type` | `type` | |
+| `fill` | `fill` | clear + type + fire `input`/`change`. |
+| `focus` | `focus` | |
+| `check` / `uncheck` | `check` / `uncheck` | via JS + `change` event. |
+| `select` | `select` | |
+| `press` / `key` | `press` | named keys, single chars, modifier chords (see the `press` quirk above). |
+| `scroll` | `scroll` | window or `--selector`. |
+| `wait` | `wait` | selector / ms / `--text` / `--fn` / `--timeout`. |
+| `screenshot` | `screenshot` | real PNG pixels on the GL build. |
+| `pdf` | `pdf` | |
+| `snapshot` | `snapshot` | role/name tree from `Accessibility.getFullAXTree`. |
+| `eval` | `eval` | |
+| `get text` / `get html` | `text` / `html` | top-level in native. |
+| `get title\|url\|value\|attr\|count\|box\|styles` | `get <field>` | `styles` via `CSS.getComputedStyleForNode`. |
+| `is visible\|enabled\|checked` | `is <state>` | |
+| `cookies` (list/set/clear) | `cookies` | meaningful on an HTTP origin. |
+| `storage local\|session` | `storage` | get/set/dump/clear. |
+| `close` / `quit` / `exit` | `stop` | native manages the process lifecycle (`start`/`stop`), so teardown is `stop`, not a per-page `close`. |
+| — | `start` / `status` / `cdp` | native-only: process lifecycle + raw CDP passthrough. |
+
+### ◐ Not wrapped, but reachable today (via `cdp` / `eval`)
+
+| agent-browser | how to do it now | a wrapper could be added? |
+| --- | --- | --- |
+| `keydown` / `keyup` | `cdp Input.dispatchKeyEvent '{"type":"keyDown",...}'` | yes — `press` already does down+up. |
+| `keyboard type` / `keyboard inserttext` | `cdp Input.insertText '{"text":"…"}'` (also what `type`/`fill` use) | yes. |
+| `scrollintoview` | `eval 'document.querySelector(sel).scrollIntoView()'` | yes (easy). |
+| `mouse move/down/up/wheel` | `cdp Input.dispatchMouseEvent '{…}'` | yes (Input is verified). |
+| `set offline [on\|off]` | `cdp Network.emulateNetworkConditions '{"offline":true,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}'` | yes — the one `set` that has real effect. |
+| `pushstate <url>` | `eval 'history.pushState({}, "", url)'` | yes. |
+| `addinitscript` / `removeinitscript` | `cdp Page.addScriptToEvaluateOnNewDocument '{"source":"…"}'` | yes (source-level method; treat as best-effort). |
+| `highlight <sel>` | `eval` to set an outline style (transient, no overlay) | partially — no native overlay surface. |
+| `drag` / `tap` / `swipe` | `cdp Input.dispatchDragEvent` / `dispatchTouchEvent` | **ack-only** — they return `{}` but side effects are not applied (ANALYSIS §3 Input), so a wrapper would look like it works without doing anything. |
+| `find role/text/label/...` | `snapshot` for roles/names, then act by CSS selector; or `eval` a custom query | `DOM.performSearch` is **absent** (-32601), so a faithful `find` can't use it — only an `eval`/AX-tree emulation. |
+
+### ✗ Not supported (engine / model constraints)
+
+| agent-browser | why not |
 | --- | --- |
-| `tab` / `window` / multi-target | `Target.createTarget` **crashes** the single shared WebView (ANALYSIS §0.2, §3 Target). One tab only. |
-| `console` / `errors` | Console arrives as **events** (`Log.entryAdded`, `Runtime.consoleAPICalled`); the stateless-per-call model can't capture events emitted between invocations. Use `cdp Log.enable` + a long-lived raw session if you need them. |
-| `network route` / `requests` / `har` | Request interception/recording is event-stream + `Fetch` interception, which isn't behaviorally verified on the binary and needs a persistent listener. |
-| `set viewport/device/geo/media/offline` | `Emulation.*` is **ack-only** on the binary (effects not applied; ANALYSIS §3 Emulation). Viewport is fixed at launch via `--width/--height`. `offline` does work via raw `cdp Network.emulateNetworkConditions`. |
-| `find role/text/label/...` | `DOM.performSearch` is **not in the binary** (-32601). Use `snapshot` to read roles/names, then act by CSS selector, or `eval` a custom query. |
-| `diff` / `trace` / `profiler` / `react` / `vitals` | Tracing/Profiler are ack-empty; React/Vitals need an injected DevTools hook the engine doesn't host. |
-| `clipboard` / `dialog` / `frame` | No clipboard surface; dialogs are **ack-only** (`handleJavaScriptDialog` can't change the value the page already saw, ANALYSIS §3 Page); single main frame. |
+| `tab` / `window` | `Target.createTarget` **crashes** the single shared WebView on first render (ANALYSIS §0.2, §3 Target). One tab only. |
+| `frame` | single main frame; no child-frame attachment to switch into. |
+| `console` / `errors` | these arrive as **events** (`Log.entryAdded`, `Runtime.consoleAPICalled`); the stateless-per-call CLI connects fresh each time and can't capture events emitted between invocations. Needs a long-lived `cdp Log.enable` session. |
+| `network route` / `unroute` / `requests` / `request` / `har` | request capture/interception is an event stream + `Fetch` interception, which isn't behaviorally verified on the binary and needs a persistent listener. |
+| `stream` (enable/status/disable) | agent-browser's runtime WebSocket streaming — an event-stream feature with no CDP equivalent here. |
+| `dialog` (accept/dismiss/status) | `handleJavaScriptDialog` is **ack-only**: the page already resumed with the default before the client responds, so accept/promptText can't change what the page saw (ANALYSIS §3 Page, §5#9). |
+| `set viewport/device/geo/media/headers/credentials` | `Emulation.*` is **ack-only** (effects not applied; ANALYSIS §3 Emulation). Viewport is fixed at launch via `--width/--height`. |
+| `device` / `tap` / `swipe` | touch/device emulation is ack-only (see Input above). |
+| `upload` / `download` | no exposed file-chooser interception or download-manager surface. |
+| `clipboard` (read/write/copy/paste) | no clipboard surface in the headless engine. |
+| `trace` / `profiler` / `record` | `Tracing.*` is ack-empty `{}`; no profiler/recording backend. |
+| `react` (tree/inspect/renders/suspense) / `vitals` | need the React DevTools / web-vitals hook injected at launch, which this engine doesn't host. |
+| `diff` (snapshot/screenshot/url) | a client-side compute feature (baseline diffing), not a CDP capability — out of scope for the thin native wrapper. |
+| `inspect` | opens the DevTools UI — no GUI inspector in headless. |
+| `auth` / `confirm` / `deny` | agent-browser's own permission-prompt workflow, not a browser/CDP feature. |
+| `state` (save/load/list/...) | agent-browser's auth-state persistence format; the building blocks (`cookies`, `storage`) are exposed, but the bundled state file format is not reproduced. |
+| `batch` | agent-browser runs many commands in one process; the native CLI is one-command-per-process by design (Starfish persists between calls, so a shell loop is the equivalent). |
+| `chat` / `install` / `upgrade` / `connect` / `dashboard` | AI/packaging/connection-management features with no role in this CDP wrapper (`connect` is implicit — every command attaches to the managed instance). |
 
 When in doubt, reach for `cdp <Domain.method>` — it covers every method the
 server implements, including ones with no convenience wrapper.
